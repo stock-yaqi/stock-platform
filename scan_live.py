@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""
+盘中「板块共振 + 大单突破」信号扫描，命中即发邮件。
+
+规则（来自回测，见 README）：
+    板块共振  板块（东财一级行业）当日等权涨幅 >= 2% 且 >= 80% 的股票上涨
+    个股      在共振板块内，当日涨幅 >= 2%，20 日均成交额 >= 3 亿
+    突破      盘中出现单分钟成交量 >= 当日到此刻中位数 8 倍，且该分钟收盘价创当日新高；
+              突破发生在最近 --window 分钟内才提示（每只股票每天只提示一次）
+    前期龙头  现价距 60 日最高价回撤 >= 25%（标记，不作为过滤）
+    卖出      次日 10:00 前，早盘冲高即走；脚本会在次日 09:31 左右发一封卖出提醒
+
+数据源：腾讯批量行情（全市场涨幅，4 秒）+ 腾讯 1 分钟 K 线（候选股，逐只）；
+        20 日均额 / 60 日高点来自本地 mins/ 分钟库，缓存在 mins/_meta/daily_cache.json。
+邮件：  读取同目录 .env 里的 SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ALERT_TO。
+
+用法：
+    python3 scan_live.py                 # 盘中由 launchd 每 5 分钟调用；非交易时段直接退出
+    python3 scan_live.py --now           # 忽略时段限制，用最新数据立刻扫一遍（收盘后复盘用）
+    python3 scan_live.py --now --no-email
+    python3 scan_live.py --build-cache   # 重建 20 日均额 / 60 日高点缓存（每天 mins_sync 之后跑）
+    python3 scan_live.py --test-email
+可调参数：--min-sector 2 --min-up 80 --min-gain 2 --min-amt 3 --spike 8 --window 15
+"""
+import argparse
+import csv
+import glob
+import json
+import os
+import smtplib
+import sys
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from datetime import datetime, date, timedelta
+from email.header import Header
+from email.mime.text import MIMEText
+from email.utils import formataddr
+
+import numpy as np
+import pandas as pd
+import requests
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.join(HERE, "mins")
+META = os.path.join(ROOT, "_meta")
+LOGS = os.path.join(ROOT, "_logs")
+CACHE = os.path.join(META, "daily_cache.json")
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36"}
+http = requests.Session()
+http.trust_env = False
+
+
+def log(msg):
+    line = f"{datetime.now():%m-%d %H:%M:%S} {msg}"
+    print(line, flush=True)
+    os.makedirs(LOGS, exist_ok=True)
+    with open(os.path.join(LOGS, f"live_{date.today():%Y%m%d}.log"), "a") as f:
+        f.write(line + "\n")
+
+
+# ---------------------------------------------------------------- 邮件
+def load_env():
+    p = os.path.join(HERE, ".env")
+    if not os.path.exists(p):
+        return {}
+    return {k.strip(): v.strip() for k, v in (l.split("=", 1) for l in open(p) if "=" in l and not l.startswith("#"))}
+
+
+def send_mail(subject, body):
+    env = load_env()
+    need = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "ALERT_TO"]
+    if any(k not in env for k in need):
+        log("未配置 .env 邮件参数，跳过发信")
+        return False
+    sender = env.get("SMTP_FROM") or env["SMTP_USER"]
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
+    msg["To"] = env["ALERT_TO"]
+    port = int(env["SMTP_PORT"])
+    for attempt in range(3):
+        try:
+            cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+            with cls(env["SMTP_HOST"], port, timeout=30) as s:
+                if port != 465:
+                    s.ehlo()
+                    s.starttls()
+                s.login(env["SMTP_USER"], env["SMTP_PASS"])
+                s.sendmail(sender, [env["ALERT_TO"]], msg.as_string())
+            log(f"邮件已发送：{subject}")
+            return True
+        except Exception as e:
+            log(f"发信失败({attempt + 1}/3)：{e!r}")
+            time.sleep(3)
+    return False
+
+
+# ---------------------------------------------------------------- 本地缓存：20 日均额 / 60 日高点
+def _stock_stats(code):
+    files = sorted(glob.glob(os.path.join(ROOT, code, "*.csv")))[-60:]
+    if len(files) < 20:
+        return code, None
+    amts, highs = [], []
+    for f in files:
+        try:
+            x = pd.read_csv(f, usecols=["high", "amount"])
+        except Exception:
+            continue
+        if len(x) < 100:
+            continue
+        amts.append(float(x["amount"].sum()))
+        highs.append(float(x["high"].max()))
+    if len(amts) < 20:
+        return code, None
+    return code, {"avg20": float(np.mean(amts[-20:])), "high60": float(max(highs)), "date": os.path.basename(files[-1])[:8]}
+
+
+def build_cache():
+    codes = sorted(os.path.basename(d) for d in glob.glob(os.path.join(ROOT, "[0-9]*")) if not os.path.basename(d).startswith("92"))
+    log(f"重建缓存：{len(codes)} 只")
+    out = {}
+    with ProcessPoolExecutor() as ex:
+        for code, st in ex.map(_stock_stats, codes, chunksize=50):
+            if st:
+                out[code] = st
+    os.makedirs(META, exist_ok=True)
+    json.dump({"built": f"{date.today():%Y%m%d}", "stocks": out}, open(CACHE, "w"))
+    log(f"缓存完成：{len(out)} 只")
+    return out
+
+
+def load_cache():
+    if os.path.exists(CACHE):
+        c = json.load(open(CACHE))
+        return c["stocks"]
+    return build_cache()
+
+
+# ---------------------------------------------------------------- 行情
+def tencent_symbol(code):
+    return ("sh" if code.startswith(("6", "9")) else "bj" if code.startswith(("4", "8")) else "sz") + code
+
+
+def batch_quotes(codes):
+    """返回 {code: {name, price, pct, amount(元), time}}"""
+    out = {}
+    syms = [tencent_symbol(c) for c in codes]
+    for i in range(0, len(syms), 80):
+        for attempt in range(3):
+            try:
+                r = http.get("https://qt.gtimg.cn/q=" + ",".join(syms[i:i + 80]), headers=UA, timeout=20)
+                r.encoding = "gbk"
+                for line in r.text.split(";"):
+                    if "=" not in line:
+                        continue
+                    f = line.split("=")[1].strip('"\n ').split("~")
+                    if len(f) < 50:
+                        continue
+                    try:
+                        out[f[2]] = {"name": f[1], "price": float(f[3]), "pct": float(f[32]), "amount": float(f[37]) * 1e4, "time": f[30]}
+                    except ValueError:
+                        pass
+                break
+            except Exception:
+                time.sleep(1 + attempt)
+    return out
+
+
+def fetch_m1_today(code, day):
+    sym = tencent_symbol(code)
+    for attempt in range(3):
+        try:
+            bars = http.get(f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={sym},m1,,320", headers=UA, timeout=15).json()["data"][sym]["m1"]
+            return [(b[0][8:10] + ":" + b[0][10:12], float(b[2]), float(b[3]), float(b[5])) for b in bars if b[0].startswith(day)]  # time, close, high, vol(手)
+        except Exception:
+            time.sleep(1 + attempt)
+    return None
+
+
+def find_breakout(bars, spike):
+    """返回 [(time, close, vol, multiple)]：分钟量 >= spike 倍当日到此刻中位数 且 收盘 >= 此前当日最高"""
+    res = []
+    v = np.array([b[3] for b in bars])
+    c = np.array([b[1] for b in bars])
+    h = np.array([b[2] for b in bars])
+    run_high = np.maximum.accumulate(h)
+    for i in range(5, len(bars)):
+        med = max(np.median(v[:i]), 1)
+        if v[i] >= spike * med and c[i] >= run_high[i - 1]:
+            res.append((bars[i][0], c[i], v[i], v[i] / med))
+    return res
+
+
+# ---------------------------------------------------------------- 主逻辑
+def in_trading_window(now):
+    if now.weekday() >= 5:
+        return False
+    t = now.strftime("%H:%M")
+    return "09:35" <= t <= "11:30" or "13:00" <= t <= "14:57"
+
+
+def minutes_between(t1, t2):
+    h1, m1 = map(int, t1.split(":"))
+    h2, m2 = map(int, t2.split(":"))
+    return (h2 * 60 + m2) - (h1 * 60 + m1)
+
+
+def sell_reminder(now, args):
+    """09:30-09:45 之间，把上一个交易日的信号发一封卖出提醒（只发一次）"""
+    t = now.strftime("%H:%M")
+    if not ("09:30" <= t <= "09:45"):
+        return
+    files = sorted(glob.glob(os.path.join(META, "live_signals_*.json")))
+    files = [f for f in files if not f.endswith(f"{now:%Y%m%d}.json")]
+    if not files:
+        return
+    last = files[-1]
+    data = json.load(open(last))
+    if not data.get("signals") or data.get("sell_reminded"):
+        return
+    lines = [f"昨日({data['date']})信号，按规则今天 10:00 前卖出，早盘冲高即走：", ""]
+    for s in data["signals"]:
+        lines.append(f"  {s['code']} {s['name']}  信号价 {s['price']}  板块 {s['sector']}  突破 {s['breakout_time']}")
+    if not args.no_email:
+        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号今日 10:00 前离场", "\n".join(lines))
+    data["sell_reminded"] = True
+    json.dump(data, open(last, "w"), ensure_ascii=False)
+
+
+def scan(args):
+    now = datetime.now()
+    today = f"{now:%Y%m%d}"
+    if not args.now and not in_trading_window(now):
+        return
+    sell_reminder(now, args)
+
+    industry = json.load(open(os.path.join(META, "industry_em.json")))
+    stocklist = json.load(open(os.path.join(META, "stocklist.json")))["stocks"]
+    codes = [s["code"] for s in stocklist if s["ex"] != "bj"]
+    cache = load_cache()
+
+    q = batch_quotes(codes)
+    if not q:
+        log("行情获取失败")
+        return
+    # 交易日判断：以 000001 的行情时间为准
+    qday = q.get("000001", {}).get("time", "")[:8]
+    if not args.now and qday != today:
+        log(f"行情日期 {qday} 不是今天，非交易日，退出")
+        return
+    day = qday if args.now else today
+
+    df = pd.DataFrame.from_dict(q, orient="index")
+    df.index.name = "code"
+    df = df.reset_index()
+    df["sec"] = df["code"].map(lambda c: industry.get(c, {}).get("em1", "") or "其他")
+    cnt = df.groupby("sec")["code"].count()
+    df.loc[df["sec"].isin(cnt[cnt < 15].index), "sec"] = "其他"
+    df = df[df["pct"].abs() < 30]  # 剔除异常
+    secstat = df.groupby("sec").agg(mean=("pct", "mean"), up=("pct", lambda s: (s > 0).mean() * 100), n=("pct", "count"))
+    resonant = secstat[(secstat["mean"] >= args.min_sector) & (secstat["up"] >= args.min_up) & (secstat.index != "其他")]
+    mkt = df["pct"].mean()
+    log(f"{day} {now:%H:%M} 全市场均涨 {mkt:+.2f}%  共振板块 {len(resonant)} 个：" +
+        "  ".join(f"{s}({r['mean']:+.1f}%,{r['up']:.0f}%上涨)" for s, r in resonant.iterrows()))
+    if resonant.empty:
+        return
+
+    state_path = os.path.join(META, f"live_signals_{day}.json")
+    state = json.load(open(state_path)) if os.path.exists(state_path) else {"date": day, "signals": [], "checked": {}}
+    done = {s["code"] for s in state["signals"]}
+
+    cand = df[df["sec"].isin(resonant.index) & (df["pct"] >= args.min_gain)].copy()
+    cand["avg20"] = cand["code"].map(lambda c: cache.get(c, {}).get("avg20", 0))
+    cand["high60"] = cand["code"].map(lambda c: cache.get(c, {}).get("high60", np.nan))
+    cand = cand[(cand["avg20"] >= args.min_amt * 1e8) & ~cand["code"].isin(done)]
+    log(f"候选 {len(cand)} 只（共振板块内 涨幅>={args.min_gain}% 20日均额>={args.min_amt}亿），拉分钟线检查突破...")
+    if cand.empty:
+        return
+
+    with ThreadPoolExecutor(8) as ex:
+        bars_list = list(ex.map(lambda c: fetch_m1_today(c, day), cand["code"]))
+
+    now_t = now.strftime("%H:%M")
+    new = []
+    for (_, s), bars in zip(cand.iterrows(), bars_list):
+        if not bars or len(bars) < 6:
+            continue
+        br = find_breakout(bars, args.spike)
+        if not br:
+            continue
+        last_t = bars[-1][0]
+        ref_t = last_t if args.now else now_t
+        recent = [b for b in br if minutes_between(b[0], ref_t) <= args.window]
+        if not recent and not args.now:
+            continue
+        b = recent[-1] if recent else br[-1]
+        dd60 = (s["price"] / s["high60"] - 1) * 100 if s["high60"] and s["high60"] > 0 else np.nan
+        new.append({
+            "code": s["code"], "name": s["name"], "sector": s["sec"], "price": s["price"], "pct": round(s["pct"], 2),
+            "breakout_time": b[0], "breakout_price": b[1], "minute_vol": int(b[2]), "spike_x": round(b[3], 1),
+            "first_breakout": br[0][0], "n_breakouts": len(br),
+            "avg20_yi": round(s["avg20"] / 1e8, 1), "dd60": round(dd60, 1) if not np.isnan(dd60) else None,
+            "leader": bool(dd60 <= -25) if not np.isnan(dd60) else False,
+            "sector_pct": round(float(resonant.loc[s["sec"], "mean"]), 2), "sector_up": round(float(resonant.loc[s["sec"], "up"]), 0),
+            "signal_time": now_t if not args.now else last_t,
+        })
+
+    if not new:
+        log("本轮无新突破")
+        return
+    new.sort(key=lambda r: (r["sector"], -r["spike_x"]))
+    state["signals"] += new
+    json.dump(state, open(state_path, "w"), ensure_ascii=False)
+    csv_path = os.path.join(HERE, f"信号_{day}.csv")
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=list(new[0].keys()))
+        if write_header:
+            w.writeheader()
+        w.writerows(new)
+
+    lines = [f"扫描时间 {day} {now:%H:%M}，全市场均涨 {mkt:+.2f}%", ""]
+    for sec, grp in pd.DataFrame(new).groupby("sector"):
+        r = resonant.loc[sec]
+        lines.append(f"■ {sec}  板块 {r['mean']:+.2f}%  {r['up']:.0f}% 上涨  ({int(r['n'])} 只)")
+        for x in grp.itertuples():
+            tag = "  [前期龙头]" if x.leader else ""
+            lines.append(f"  {x.code} {x.name}  现价 {x.price}  涨 {x.pct:+.2f}%  突破 {x.breakout_time} @ {x.breakout_price}  "
+                         f"分钟量 {x.minute_vol} 手 = {x.spike_x} 倍  首次突破 {x.first_breakout}  20日均额 {x.avg20_yi} 亿  距60日高 {x.dd60}%{tag}")
+        lines.append("")
+    lines.append("规则：次日 10:00 前卖出，早盘冲高即走。板块不共振不出手。回测均值 +1.3%/笔（未扣费），胜率 60%。")
+    body = "\n".join(lines)
+    log("新信号 %d 只：%s" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new)))
+    print(body)
+    if not args.no_email:
+        send_mail(f"【板块共振信号】{now:%H:%M} {len(new)} 只：" + "、".join(f"{x['name']}" for x in new[:6]) + ("…" if len(new) > 6 else ""), body)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="盘中板块共振+大单突破扫描")
+    ap.add_argument("--now", action="store_true", help="忽略交易时段，用最新数据立即扫描")
+    ap.add_argument("--no-email", action="store_true")
+    ap.add_argument("--build-cache", action="store_true")
+    ap.add_argument("--test-email", action="store_true")
+    ap.add_argument("--min-sector", type=float, default=2.0, help="板块等权涨幅下限 %%")
+    ap.add_argument("--min-up", type=float, default=80.0, help="板块上涨家数占比下限 %%")
+    ap.add_argument("--min-gain", type=float, default=2.0, help="个股当日涨幅下限 %%")
+    ap.add_argument("--min-amt", type=float, default=3.0, help="20 日均成交额下限（亿）")
+    ap.add_argument("--spike", type=float, default=8.0, help="分钟量相对当日中位数的倍数")
+    ap.add_argument("--window", type=int, default=15, help="突破发生在最近 N 分钟内才提示")
+    args = ap.parse_args()
+    if args.build_cache:
+        build_cache()
+        return
+    if args.test_email:
+        ok = send_mail("【测试】板块共振信号", "邮件通道正常。")
+        sys.exit(0 if ok else 1)
+    scan(args)
+
+
+if __name__ == "__main__":
+    main()

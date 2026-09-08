@@ -68,3 +68,34 @@ launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.pli
 ```
 
 电脑 15:10 处于睡眠时，launchd 会在唤醒后补跑；关机错过的日子由下一次运行的「补最近 3 个交易日」兜底。
+
+### scan_live.py — 盘中「板块共振 + 大单突破」信号（发邮件）
+
+规则来自本地分钟数据回测（1300 笔，次日 10:00 卖平均 +1.33%，胜率 60%；板块不共振的对照组 -0.03%）：
+
+- 板块共振：东财一级行业当日等权涨幅 ≥ 2% 且 ≥ 80% 股票上涨。板块是第一要素。
+- 个股：共振板块内，当日涨幅 ≥ 2%，20 日均成交额 ≥ 3 亿。
+- 突破：单分钟量 ≥ 当日中位数 8 倍且收盘创当日新高，突破在最近 15 分钟内才提示，每股每天一次。
+- 卖出：次日 10:00 前，早盘冲高即走。次日 09:31 左右自动发卖出提醒邮件。
+
+```bash
+python3 scan_live.py --now --no-email      # 立即扫一遍（盘中实时 / 收盘复盘），只打印
+python3 scan_live.py --build-cache         # 重建 20 日均额 / 60 日高点缓存（daily_job.sh 已包含）
+python3 scan_live.py --test-email
+python3 scan_live.py --now --no-email --min-gain 1 --window 30   # 参数：--min-sector --min-up --min-gain --min-amt --spike --window
+```
+
+邮件配置写在 `.env`（不进 git）：`SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM ALERT_TO`。
+信号写入 `信号_<日期>.csv` 和 `mins/_meta/live_signals_<日期>.json`，日志在 `mins/_logs/live_<日期>.log`。
+
+**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 5 分钟运行一次，脚本自行判断交易时段（周一到周五 09:35-11:30、13:00-14:57）和交易日，命中即发邮件。
+
+```bash
+launchctl print gui/501/com.qyhdt.stock-live-scan | head
+launchctl bootout gui/501/com.qyhdt.stock-live-scan
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist
+```
+
+### fetch_industry.py — 东财行业分类
+
+拉取全市场东财行业到 `mins/_meta/industry_em.json`，scan_live.py 和 scan_inflow 的板块统计依赖它。新股上市后重跑一次即可，已有的不重复拉。
