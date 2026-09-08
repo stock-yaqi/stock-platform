@@ -100,3 +100,20 @@ launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.qyhdt.stock-live-scan.pli
 ### fetch_industry.py — 东财行业分类
 
 拉取全市场东财行业到 `mins/_meta/industry_em.json`，scan_live.py 和 scan_inflow 的板块统计依赖它。新股上市后重跑一次即可，已有的不重复拉。
+
+### scan_events.py — 美股 AI 链事件日历（埋伏 + 盘后反应）
+
+来自案例：科翔股份 8/26（英伟达财报前一天）买入，8/27 电子板块共振 +14%；美光 6/24 财报次日存储股 +10% 到 +15%，而大盘跌 1.3%。
+
+- `events.json`：事件日历（美东日期）。`confirmed=false` 是按往年规律估计的日期，公司公告后改成准确日期。
+- `chains.json`：A 股链条（PCB / 存储 / 光模块 / 服务器算力 / 半导体），关键字匹配东财行业 + 手工代表股。
+- 事件日 14:00：从对应链条挑「前期龙头、MACD 零轴附近、DIF 上行、当天砸盘被接住、未先涨」的股票，按满足条件数排序发邮件，存 `事件埋伏_<日期>_<代码>.csv`。
+- 次日 07:40：取雅虎盘后 5 分钟线算盘后涨跌，给出处理：盘后 ≥ +3% 按共振日处理早盘冲高卖；-2% 到 +3% 观望 10:00 前走；≤ -2% 开盘直接卖。台积电月营收这类盘中事件只发提醒，盘中靠 scan_live 抓共振。
+
+```bash
+python3 scan_events.py --list                          # 看未来事件
+python3 scan_events.py --pre  --date 2026-09-30 --no-email
+python3 scan_events.py --post --date 2026-09-30 --no-email
+```
+
+**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-events.plist`，工作日 07:40 和 14:00 各跑一次 `--auto`，当天没有事件就直接退出。雅虎接口走本机代理 127.0.0.1:10809。

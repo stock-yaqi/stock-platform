@@ -2,6 +2,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+.debugging
 .venv/
 venv/
 node_modules/
@@ -10,3 +11,4 @@ mins/
 分钟放量*.csv
 资金进场*.csv
 信号_*.csv
+事件埋伏_*.csv

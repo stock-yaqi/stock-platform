@@ -1,0 +1,14 @@
+{
+  "_说明": "美股 AI 硬件链催化剂日历。date 为美东日期；after_close 事件北京时间次日凌晨出结果，A 股反应日 = date 的下一个交易日。confirmed=false 的日期是按往年规律估计的，公司公告后请改成准确日期。chains 对应 chains.json 里的链条名。",
+  "events": [
+    {"date": "2026-09-10", "name": "台积电 8 月营收", "ticker": "TSM", "type": "intraday", "confirmed": false, "chains": ["半导体", "PCB"], "note": "北京时间当天 13:30 前后发布"},
+    {"date": "2026-09-30", "name": "美光 FY26Q4 财报", "ticker": "MU", "type": "after_close", "confirmed": true, "chains": ["存储", "半导体"], "note": "指引营收约 500 亿美元"},
+    {"date": "2026-10-09", "name": "台积电 9 月营收", "ticker": "TSM", "type": "intraday", "confirmed": false, "chains": ["半导体", "PCB"], "note": ""},
+    {"date": "2026-11-03", "name": "AMD Q3 财报", "ticker": "AMD", "type": "after_close", "confirmed": false, "chains": ["服务器算力", "半导体"], "note": "往年 11 月初，待公告"},
+    {"date": "2026-11-10", "name": "台积电 10 月营收", "ticker": "TSM", "type": "intraday", "confirmed": false, "chains": ["半导体", "PCB"], "note": ""},
+    {"date": "2026-11-18", "name": "英伟达 FY27Q3 财报", "ticker": "NVDA", "type": "after_close", "confirmed": false, "chains": ["光模块", "PCB", "服务器算力", "存储", "半导体"], "note": "网上有 11/17 和 11/25 两种说法，待英伟达官网公告后修正"},
+    {"date": "2026-12-10", "name": "台积电 11 月营收", "ticker": "TSM", "type": "intraday", "confirmed": false, "chains": ["半导体", "PCB"], "note": ""},
+    {"date": "2026-12-10", "name": "博通 FY26Q4 财报", "ticker": "AVGO", "type": "after_close", "confirmed": false, "chains": ["光模块", "PCB", "半导体"], "note": "往年 12 月中上旬，待公告"},
+    {"date": "2026-12-16", "name": "美光 FY27Q1 财报", "ticker": "MU", "type": "after_close", "confirmed": false, "chains": ["存储", "半导体"], "note": "往年 12 月中下旬，待公告"}
+  ]
+}

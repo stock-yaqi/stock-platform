@@ -158,7 +158,8 @@ def batch_quotes(codes):
                     if len(f) < 50:
                         continue
                     try:
-                        out[f[2]] = {"name": f[1], "price": float(f[3]), "pct": float(f[32]), "amount": float(f[37]) * 1e4, "time": f[30]}
+                        out[f[2]] = {"name": f[1], "price": float(f[3]), "pct": float(f[32]), "amount": float(f[37]) * 1e4, "time": f[30],
+                                     "prev_close": float(f[4]) if f[4] else 0.0, "low": float(f[34]) if f[34] else 0.0, "high": float(f[33]) if f[33] else 0.0}
                     except ValueError:
                         pass
                 break
