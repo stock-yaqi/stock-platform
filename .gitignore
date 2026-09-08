@@ -8,3 +8,4 @@ node_modules/
 .env
 mins/
 分钟放量*.csv
+资金进场*.csv

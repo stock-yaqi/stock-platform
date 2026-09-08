@@ -43,7 +43,22 @@ python3 mins_sync.py --codes 601868 000001
 
 日志在 `mins/_logs/`。`mins/` 已加入 .gitignore，不会提交到 git。
 
-**定时任务**：launchd 每周一到周五 15:10 自动运行每日模式，配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
+### scan_inflow.py — 资金进场扫描
+
+用本地分钟数据找出「成交额突然放大、买盘主动、连续净流入、还没涨完」的股票。指标包括成交额倍数（今日 / 前 20 日均值）、
+换手率与换手倍数（流通股本取自腾讯行情）、分钟级净流入占比（分钟涨视为主动买、跌视为主动卖）、近 5 日净流入占比、
+连续净流入天数、尾盘 30 分钟成交额占比、最大分钟量倍数，以及 1 / 5 / 20 日涨幅。
+
+```bash
+python3 scan_inflow.py                     # 创业板，默认筛选：成交额倍数>=2、净流入为正、近5日净流入为正、20日涨幅<30%、成交额>=1亿
+python3 scan_inflow.py --board kcb         # 科创板；zb 主板；bj 北交所；all 全市场
+python3 scan_inflow.py --min-ratio 3 --max-gain20 20 --top 30
+python3 scan_inflow.py --no-filter         # 输出全部股票指标
+```
+
+结果输出到 `资金进场_<板块>_<日期>.csv`，含全部股票的指标和「命中」列。
+
+**定时任务**：launchd 每周一到周五 15:10 运行 `daily_job.sh`（先 `mins_sync.py` 同步分钟数据，再 `scan_inflow.py --board cyb`），配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-mins-sync | head        # 查看状态
