@@ -58,7 +58,7 @@ python3 scan_inflow.py --no-filter         # 输出全部股票指标
 
 结果输出到 `资金进场_<板块>_<日期>.csv`，含全部股票的指标和「命中」列。
 
-**定时任务**：launchd 每周一到周五 15:10 运行 `daily_job.sh`（先 `mins_sync.py` 同步分钟数据，再 `scan_inflow.py --board cyb`），配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
+**定时任务**：launchd 每周一到周五 15:10 运行 `daily_job.sh`（依次 `mins_sync.py` 同步分钟数据、`scan_live.py --build-cache` 重建缓存、`scan_avoid.py` 回避名单；`scan_inflow.py` 回测为负期望，已不在每日任务里，需要时手动跑），配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-mins-sync | head        # 查看状态
