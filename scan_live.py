@@ -8,6 +8,7 @@
     突破      盘中出现单分钟成交量 >= 当日到此刻中位数 8 倍，且该分钟收盘价创当日新高；
               突破发生在最近 --window 分钟内才提示（每只股票每天只提示一次）
     前期龙头  现价距 60 日最高价回撤 >= 25%（标记，不作为过滤）
+    外围过滤  日经 225 或韩国综合当天跌幅 >= 1.5% 的日子不出信号（回测：这类日子极少共振，勉强做为负收益）
     卖出      次日 10:00 前，早盘冲高即走；脚本会在次日 09:31 左右发一封卖出提醒
 
 数据源：腾讯批量行情（全市场涨幅，4 秒）+ 腾讯 1 分钟 K 线（候选股，逐只）；
@@ -177,6 +178,27 @@ def fetch_m1_today(code, day):
     return None
 
 
+def overseas():
+    """新浪实时：日经225 / 韩国综合 当天涨跌幅，纳指最近一个交易日涨跌幅。失败返回 {}"""
+    try:
+        r = http.get("https://hq.sinajs.cn/list=znb_NKY,znb_KOSPI,gb_ixic",
+                     headers={"User-Agent": UA["User-Agent"], "Referer": "https://finance.sina.com.cn/"}, timeout=15)
+        r.encoding = "gbk"
+        out = {}
+        for line in r.text.strip().split("\n"):
+            f = line.split('"')[1].split(",")
+            if "NKY" in line:
+                out["日经"] = float(f[3])
+            elif "KOSPI" in line:
+                out["韩国"] = float(f[3])
+            elif "ixic" in line:
+                out["纳指"] = float(f[2])
+        return out
+    except Exception as e:
+        log(f"外围指数获取失败：{e!r}")
+        return {}
+
+
 def find_breakout(bars, spike):
     """返回 [(time, close, vol, multiple)]：分钟量 >= spike 倍当日到此刻中位数 且 收盘 >= 此前当日最高"""
     res = []
@@ -234,6 +256,14 @@ def scan(args):
         return
     sell_reminder(now, args)
 
+    ov = overseas()
+    ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
+    if not args.ignore_overseas:
+        bad = [k for k in ("日经", "韩国") if ov.get(k, 0) <= -args.max_overseas_drop]
+        if bad:
+            log(f"外围大跌（{ov_line}），{'/'.join(bad)} 跌幅超过 {args.max_overseas_drop}%，按规则今天停手")
+            return
+
     industry = json.load(open(os.path.join(META, "industry_em.json")))
     stocklist = json.load(open(os.path.join(META, "stocklist.json")))["stocks"]
     codes = [s["code"] for s in stocklist if s["ex"] != "bj"]
@@ -260,6 +290,7 @@ def scan(args):
     secstat = df.groupby("sec").agg(mean=("pct", "mean"), up=("pct", lambda s: (s > 0).mean() * 100), n=("pct", "count"))
     resonant = secstat[(secstat["mean"] >= args.min_sector) & (secstat["up"] >= args.min_up) & (secstat.index != "其他")]
     mkt = df["pct"].mean()
+    log(f"{day} {now:%H:%M} 外围：{ov_line}")
     log(f"{day} {now:%H:%M} 全市场均涨 {mkt:+.2f}%  共振板块 {len(resonant)} 个：" +
         "  ".join(f"{s}({r['mean']:+.1f}%,{r['up']:.0f}%上涨)" for s, r in resonant.iterrows()))
     if resonant.empty:
@@ -319,7 +350,7 @@ def scan(args):
             w.writeheader()
         w.writerows(new)
 
-    lines = [f"扫描时间 {day} {now:%H:%M}，全市场均涨 {mkt:+.2f}%", ""]
+    lines = [f"扫描时间 {day} {now:%H:%M}，全市场均涨 {mkt:+.2f}%", f"外围：{ov_line}" + ("  ⚠ 隔夜纳指跌超1.5%，注意早盘溢价可能偏弱" if ov.get("纳指", 0) <= -1.5 else ""), ""]
     for sec, grp in pd.DataFrame(new).groupby("sector"):
         r = resonant.loc[sec]
         lines.append(f"■ {sec}  板块 {r['mean']:+.2f}%  {r['up']:.0f}% 上涨  ({int(r['n'])} 只)")
@@ -348,6 +379,8 @@ def main():
     ap.add_argument("--min-amt", type=float, default=3.0, help="20 日均成交额下限（亿）")
     ap.add_argument("--spike", type=float, default=8.0, help="分钟量相对当日中位数的倍数")
     ap.add_argument("--window", type=int, default=15, help="突破发生在最近 N 分钟内才提示")
+    ap.add_argument("--max-overseas-drop", type=float, default=1.5, help="日经或韩国当天跌幅达到此值(%%)则停手，默认 1.5")
+    ap.add_argument("--ignore-overseas", action="store_true", help="不做外围大跌过滤")
     args = ap.parse_args()
     if args.build_cache:
         build_cache()
