@@ -71,25 +71,31 @@ launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.pli
 
 ### scan_live.py — 盘中「板块共振 + 大单突破」信号（发邮件）
 
-规则来自本地分钟数据回测（1300 笔，次日 10:00 卖平均 +1.33%，胜率 60%；板块不共振的对照组 -0.03%）：
+**严格回测（板块共振与个股涨幅都用买入那一分钟的值，31 个交易日，未扣费）**：突破买入次日 10:00 卖，全部板块平均 -0.14%、胜率 48%，
+边际只在几个子集：电子设备 +0.86%/57%（486 笔），有色金属 +1.24%/58%，农林牧渔 +1.85%/64%；国防与装备 -3.85%/21%，电气设备 -1.56%，机械设备 -1.35%。
+前期龙头（距 60 日高 ≤ -25%）+0.54%/54%，非前期龙头 -0.77%/42%。上午入场 +0.37%，尾盘 30 分入场 -0.40%。
+板块第 2 只突破出现时买其余在日内高点 1% 以内的活跃股（联动候选）+0.82%/57%，比追突破好。
 
-- 板块共振：东财一级行业当日等权涨幅 ≥ 2% 且 ≥ 80% 股票上涨。板块是第一要素。
-- 个股：共振板块内，当日涨幅 ≥ 2%，20 日均成交额 ≥ 3 亿。
+规则：
+- 板块共振：东财一级行业当日等权涨幅 ≥ 2% 且 ≥ 80% 股票上涨。默认只对白名单板块发信号：电子设备、有色金属、农林牧渔（`--sectors` 改，`--all-sectors` 不限）。
+- 个股：共振板块内，当日涨幅 ≥ 2%，20 日均成交额 ≥ 3 亿。前期龙头优先排前，非前期龙头标注"历史偏弱"（`--leaders-only` 只发龙头）。
 - 突破：单分钟量 ≥ 当日中位数 8 倍且收盘创当日新高，突破在最近 15 分钟内才提示，每股每天一次。
-- 外围过滤：日经 225 或韩国综合当天跌幅 ≥ 1.5% 的日子不出信号（回测：这类日子出现共振板块的概率只有 15%，勉强做平均为负）。`--max-overseas-drop` 调阈值，`--ignore-overseas` 关闭。邮件里附外围快照，隔夜纳指跌超 1.5% 会标注提醒。
+- 联动候选：板块内今日已有 ≥ 2 只突破后，其余处于共振、涨 ≥ 2%、距日内高点 ≤ 1% 且尚未突破的活跃股，单独列出，写入 `联动候选_<日期>.csv`。
+- 时段：09:35-11:30、13:00-14:30，14:30 后不再发新信号。
+- 外围过滤：日经 225 或韩国综合当天跌幅 ≥ 1.5% 的日子不出信号。`--max-overseas-drop` 调阈值，`--ignore-overseas` 关闭。
 - 卖出：次日 10:00 前，早盘冲高即走。次日 09:31 左右自动发卖出提醒邮件。
 
 ```bash
 python3 scan_live.py --now --no-email      # 立即扫一遍（盘中实时 / 收盘复盘），只打印
 python3 scan_live.py --build-cache         # 重建 20 日均额 / 60 日高点缓存（daily_job.sh 已包含）
 python3 scan_live.py --test-email
-python3 scan_live.py --now --no-email --min-gain 1 --window 30   # 参数：--min-sector --min-up --min-gain --min-amt --spike --window
+python3 scan_live.py --now --no-email --all-sectors --min-gain 1 --window 30   # 参数：--sectors --leaders-only --min-sector --min-up --min-gain --min-amt --spike --window
 ```
 
 邮件配置写在 `.env`（不进 git）：`SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM ALERT_TO`，ALERT_TO 多个收件人用逗号隔开。邮件为 HTML 卡片排版，附纯文本兜底。
 信号写入 `信号_<日期>.csv` 和 `mins/_meta/live_signals_<日期>.json`，日志在 `mins/_logs/live_<日期>.log`。
 
-**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 1 分钟运行一次（文件锁防止重叠，每轮实测 1-10 秒），脚本自行判断交易时段（周一到周五 09:35-11:30、13:00-14:57）和交易日，命中即发邮件。
+**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 1 分钟运行一次（文件锁防止重叠，每轮实测 1-10 秒），脚本自行判断交易时段和交易日，命中即发邮件。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-live-scan | head

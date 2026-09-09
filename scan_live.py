@@ -275,7 +275,7 @@ def in_trading_window(now):
     if now.weekday() >= 5:
         return False
     t = now.strftime("%H:%M")
-    return "09:35" <= t <= "11:30" or "13:00" <= t <= "14:57"
+    return "09:35" <= t <= "11:30" or "13:00" <= t <= "14:30"
 
 
 def minutes_between(t1, t2):
@@ -358,10 +358,20 @@ def scan(args):
         "  ".join(f"{s}({r['mean']:+.1f}%,{r['up']:.0f}%上涨)" for s, r in resonant.iterrows()))
     if resonant.empty:
         return
+    if not args.all_sectors:
+        allow = {x.strip() for x in args.sectors.split(",") if x.strip()}
+        skipped = [x for x in resonant.index if x not in allow]
+        resonant = resonant[resonant.index.isin(allow)]
+        if skipped:
+            log(f"不在白名单的共振板块跳过：{'、'.join(skipped)}")
+        if resonant.empty:
+            return
 
     state_path = os.path.join(META, f"live_signals_{day}.json")
     state = json.load(open(state_path)) if os.path.exists(state_path) else {"date": day, "signals": [], "checked": {}}
+    state.setdefault("follow", [])
     done = {s["code"] for s in state["signals"]}
+    follow_done = {f["code"] for f in state["follow"]}
 
     cand = df[df["sec"].isin(resonant.index) & (df["pct"] >= args.min_gain)].copy()
     cand["avg20"] = cand["code"].map(lambda c: cache.get(c, {}).get("avg20", 0))
@@ -399,49 +409,99 @@ def scan(args):
             "signal_time": now_t if not args.now else last_t,
         })
 
-    if not new:
+    if args.leaders_only:
+        new = [x for x in new if x["leader"]]
+
+    # 3. 联动候选：板块内今日已有 >=2 只突破后，其余处于共振、涨>=2%、距日内高点<=1% 的活跃股
+    all_sig = state["signals"] + new
+    sec_count = pd.Series([x["sector"] for x in all_sig]).value_counts() if all_sig else pd.Series(dtype=int)
+    follow = []
+    sig_codes = {x["code"] for x in all_sig}
+    for sec in sec_count[sec_count >= 2].index:
+        pool = df[(df["sec"] == sec) & (df["pct"] >= args.min_gain) & (df["high"] > 0)]
+        pool = pool[(pool["price"] / pool["high"] - 1) * 100 >= -1]
+        for _, s in pool.iterrows():
+            if s["code"] in sig_codes or s["code"] in follow_done:
+                continue
+            a20 = cache.get(s["code"], {}).get("avg20", 0)
+            if a20 < args.min_amt * 1e8:
+                continue
+            h60 = cache[s["code"]].get("high60") or 0
+            dd60 = (s["price"] / h60 - 1) * 100 if h60 > 0 else np.nan
+            follow.append({"code": s["code"], "name": s["name"], "sector": sec, "price": s["price"], "pct": round(s["pct"], 2),
+                           "dist_high": round((s["price"] / s["high"] - 1) * 100, 2), "avg20_yi": round(a20 / 1e8, 1),
+                           "dd60": round(dd60, 1) if not np.isnan(dd60) else None, "leader": bool(dd60 <= -25) if not np.isnan(dd60) else False,
+                           "signal_time": now_t if not args.now else "复盘", "n_breakouts": int(sec_count[sec])})
+    follow.sort(key=lambda r: (r["sector"], not r["leader"], -r["pct"]))
+
+    if not new and not follow:
         log("本轮无新突破")
         return
-    new.sort(key=lambda r: (r["sector"], -r["spike_x"]))
+    new.sort(key=lambda r: (r["sector"], not r["leader"], -r["spike_x"]))
     state["signals"] += new
+    state["follow"] += follow
     json.dump(state, open(state_path, "w"), ensure_ascii=False)
-    csv_path = os.path.join(HERE, f"信号_{day}.csv")
-    write_header = not os.path.exists(csv_path)
-    with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=list(new[0].keys()))
-        if write_header:
-            w.writeheader()
-        w.writerows(new)
+    if new:
+        csv_path = os.path.join(HERE, f"信号_{day}.csv")
+        write_header = not os.path.exists(csv_path)
+        with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(new[0].keys()))
+            if write_header:
+                w.writeheader()
+            w.writerows(new)
+    if follow:
+        fcsv = os.path.join(HERE, f"联动候选_{day}.csv")
+        write_header = not os.path.exists(fcsv)
+        with open(fcsv, "a", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(follow[0].keys()))
+            if write_header:
+                w.writeheader()
+            w.writerows(follow)
 
+    RULE = ("规则：次日 10:00 前卖出，早盘冲高即走。严格回测（买入时点口径）：电子设备 +0.86%/57%，有色 +1.24%/58%，农林牧渔 +1.85%/64%；"
+            "前期龙头 +0.54%/54%，非前期龙头 -0.77%/42%；14:30 后入场为负。联动候选（板块第 2 只突破后买高点附近的其余股）+0.82%/57%。未扣费，样本 31 个交易日。这是信号，不是买入建议。")
     lines = [f"扫描时间 {day} {now:%H:%M}，全市场均涨 {mkt:+.2f}%", f"外围：{ov_line}" + ("  ⚠ 隔夜纳指跌超1.5%，注意早盘溢价可能偏弱" if ov.get("纳指", 0) <= -1.5 else ""), ""]
-    for sec, grp in pd.DataFrame(new).groupby("sector"):
+    for sec, grp in pd.DataFrame(new).groupby("sector") if new else []:
         r = resonant.loc[sec]
         lines.append(f"■ {sec}  板块 {r['mean']:+.2f}%  {r['up']:.0f}% 上涨  ({int(r['n'])} 只)")
         for x in grp.itertuples():
-            tag = "  [前期龙头]" if x.leader else ""
+            tag = "  [前期龙头]" if x.leader else "  [非前期龙头，历史偏弱]"
             lines.append(f"  {x.code} {x.name}  现价 {x.price}  涨 {x.pct:+.2f}%  突破 {x.breakout_time} @ {x.breakout_price}  "
                          f"分钟量 {x.minute_vol} 手 = {x.spike_x} 倍  首次突破 {x.first_breakout}  20日均额 {x.avg20_yi} 亿  距60日高 {x.dd60}%{tag}")
         lines.append("")
-    lines.append("规则：次日 10:00 前卖出，早盘冲高即走。板块不共振不出手。回测均值 +1.3%/笔（未扣费），胜率 60%。")
+    for sec, grp in pd.DataFrame(follow).groupby("sector") if follow else []:
+        lines.append(f"▲ 联动候选 {sec}（板块今日已 {grp.iloc[0]['n_breakouts']} 只突破，以下在日内高点 1% 以内、尚未突破）")
+        for x in grp.itertuples():
+            lines.append(f"  {x.code} {x.name}  现价 {x.price}  涨 {x.pct:+.2f}%  距日内高 {x.dist_high}%  20日均额 {x.avg20_yi} 亿  距60日高 {x.dd60}%" + ("  [前期龙头]" if x.leader else ""))
+        lines.append("")
+    lines.append(RULE)
     body = "\n".join(lines)
     parts = []
-    for sec, grp in pd.DataFrame(new).groupby("sector"):
+    for sec, grp in pd.DataFrame(new).groupby("sector") if new else []:
         r = resonant.loc[sec]
         parts.append(h_section(f"{sec} {h_pct(r['mean'])}", f"{r['up']:.0f}% 上涨 · {int(r['n'])} 只"))
         for x in grp.itertuples():
             parts.append(h_card(
                 f"{x.name} <span style='color:{GRAY};font-weight:400;font-size:12px'>{x.code}</span>", h_pct(x.pct),
                 h_kv(("突破", f"{x.breakout_time} @ {x.breakout_price:g}"), ("分钟量", f"{x.spike_x} 倍"), ("现价", f"{x.price:g}")),
-                h_kv(("首次突破", x.first_breakout), ("20日均额", f"{x.avg20_yi} 亿"), ("距60日高", f"{x.dd60}%")),
+                h_kv(("首次突破", x.first_breakout), ("20日均额", f"{x.avg20_yi} 亿"), ("距60日高", f"{x.dd60}%")) +
+                ("" if x.leader else f" <span style='color:{GRAY}'>非前期龙头，历史偏弱</span>"),
                 "前期龙头" if x.leader else ""))
+    for sec, grp in pd.DataFrame(follow).groupby("sector") if follow else []:
+        parts.append(h_section(f"联动候选 · {sec}", f"板块今日已 {grp.iloc[0]['n_breakouts']} 只突破 · 高点 1% 以内、尚未突破"))
+        for x in grp.itertuples():
+            parts.append(h_card(f"{x.name} <span style='color:{GRAY};font-weight:400;font-size:12px'>{x.code}</span>", h_pct(x.pct),
+                                h_kv(("现价", f"{x.price:g}"), ("距日内高", f"{x.dist_high}%"), ("20日均额", f"{x.avg20_yi} 亿")),
+                                h_kv(("距60日高", f"{x.dd60}%")), "前期龙头" if x.leader else ""))
     ov_warn = " · <span style='color:#b8742a'>隔夜纳指跌超 1.5%，早盘溢价可能偏弱</span>" if ov.get("纳指", 0) <= -1.5 else ""
     html = h_wrap(f"板块共振信号 · {now:%H:%M}",
                   [f"{day[:4]}-{day[4:6]}-{day[6:]} · 全市场均涨 {h_pct(mkt)} · 共振板块 {len(resonant)} 个", f"外围 {ov_line}{ov_warn}"],
-                  parts, "卖出规则：次日 10:00 前离场，早盘冲高即走。板块不共振不出手。回测 1300 笔平均 +1.3%/笔（未扣费），胜率 60%。这是信号，不是买入建议。")
-    log("新信号 %d 只：%s" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new)))
+                  parts, RULE)
+    log("新信号 %d 只：%s | 联动候选 %d 只" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new), len(follow)))
     print(body)
     if not args.no_email:
-        send_mail(f"【板块共振信号】{now:%H:%M} {len(new)} 只：" + "、".join(f"{x['name']}" for x in new[:6]) + ("…" if len(new) > 6 else ""), body, html)
+        names_ = [x["name"] for x in new[:6]] or [x["name"] for x in follow[:6]]
+        send_mail(f"【板块共振信号】{now:%H:%M} 突破 {len(new)} 只 联动 {len(follow)} 只：" + "、".join(names_) + ("…" if len(new) > 6 else ""), body, html)
 
 
 def acquire_lock():
@@ -469,6 +529,9 @@ def main():
     ap.add_argument("--spike", type=float, default=8.0, help="分钟量相对当日中位数的倍数")
     ap.add_argument("--window", type=int, default=15, help="突破发生在最近 N 分钟内才提示")
     ap.add_argument("--max-overseas-drop", type=float, default=1.5, help="日经或韩国当天跌幅达到此值(%%)则停手，默认 1.5")
+    ap.add_argument("--sectors", default="电子设备,有色金属,农林牧渔", help="只对这些板块发信号（严格回测为正的板块），逗号分隔")
+    ap.add_argument("--all-sectors", action="store_true", help="不限板块（国防/电气/机械/交运/信息技术历史为负）")
+    ap.add_argument("--leaders-only", action="store_true", help="只发前期龙头（距60日高<=-25%%）的信号")
     ap.add_argument("--ignore-overseas", action="store_true", help="不做外围大跌过滤")
     args = ap.parse_args()
     if args.build_cache:
