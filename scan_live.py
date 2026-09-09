@@ -16,7 +16,7 @@
 邮件：  读取同目录 .env 里的 SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ALERT_TO（多个收件人用逗号隔开）。
 
 用法：
-    python3 scan_live.py                 # 盘中由 launchd 每 5 分钟调用；非交易时段直接退出
+    python3 scan_live.py                 # 盘中由 launchd 每 1 分钟调用；非交易时段直接退出；文件锁防止重叠
     python3 scan_live.py --now           # 忽略时段限制，用最新数据立刻扫一遍（收盘后复盘用）
     python3 scan_live.py --now --no-email
     python3 scan_live.py --build-cache   # 重建 20 日均额 / 60 日高点缓存（每天 mins_sync 之后跑）
@@ -444,6 +444,18 @@ def scan(args):
         send_mail(f"【板块共振信号】{now:%H:%M} {len(new)} 只：" + "、".join(f"{x['name']}" for x in new[:6]) + ("…" if len(new) > 6 else ""), body, html)
 
 
+def acquire_lock():
+    """同一时刻只允许一个扫描进程（launchd 每分钟触发，防止上一轮没跑完又起一轮）"""
+    import fcntl
+    os.makedirs(META, exist_ok=True)
+    fh = open(os.path.join(META, "live.lock"), "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    return fh
+
+
 def main():
     ap = argparse.ArgumentParser(description="盘中板块共振+大单突破扫描")
     ap.add_argument("--now", action="store_true", help="忽略交易时段，用最新数据立即扫描")
@@ -471,7 +483,13 @@ def main():
                       "卖出规则：次日 10:00 前离场，早盘冲高即走。")
         ok = send_mail("【测试】板块共振信号", "邮件通道正常。", html)
         sys.exit(0 if ok else 1)
+    lock = acquire_lock()
+    if lock is None:
+        return  # 上一轮还在跑
+    t0 = time.time()
     scan(args)
+    if in_trading_window(datetime.now()) or args.now:
+        log(f"本轮耗时 {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":

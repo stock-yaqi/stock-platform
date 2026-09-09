@@ -89,7 +89,7 @@ python3 scan_live.py --now --no-email --min-gain 1 --window 30   # 参数：--mi
 邮件配置写在 `.env`（不进 git）：`SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM ALERT_TO`，ALERT_TO 多个收件人用逗号隔开。邮件为 HTML 卡片排版，附纯文本兜底。
 信号写入 `信号_<日期>.csv` 和 `mins/_meta/live_signals_<日期>.json`，日志在 `mins/_logs/live_<日期>.log`。
 
-**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 5 分钟运行一次，脚本自行判断交易时段（周一到周五 09:35-11:30、13:00-14:57）和交易日，命中即发邮件。
+**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 1 分钟运行一次（文件锁防止重叠，每轮实测 1-10 秒），脚本自行判断交易时段（周一到周五 09:35-11:30、13:00-14:57）和交易日，命中即发邮件。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-live-scan | head
