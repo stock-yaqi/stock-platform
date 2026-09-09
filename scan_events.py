@@ -88,6 +88,7 @@ def pre_scan(ev_list, args):
     cache = L.load_cache()
     days = prev_trading_days(70)
     lines_all = []
+    parts = []
     for ev in ev_list:
         codes = [c for c in chain_codes(chains, ev["chains"], industry) if cache.get(c, {}).get("avg20", 0) >= args.min_amt * 1e8]
         q = L.batch_quotes(codes)
@@ -120,6 +121,7 @@ def pre_scan(ev_list, args):
                          "score": sum(conds.values()), "tags": " ".join(k for k, v in conds.items() if v)})
         if not rows:
             lines_all.append(f"■ {ev['date']} {ev['name']}：链条 {'/'.join(ev['chains'])} 无可用候选")
+            parts.append(L.h_section(ev["name"], "无可用候选"))
             continue
         df = pd.DataFrame(rows).sort_values(["score", "avg20"], ascending=[False, False])
         head = (f"■ {ev['date']} {ev['name']}（{ev['ticker']}，{'美股盘后' if ev['type'] == 'after_close' else '北京时间盘中'}"
@@ -129,12 +131,23 @@ def pre_scan(ev_list, args):
             lines.append(f"  [{r.score}/5] {r.code} {r.name:<6} 现价 {r.price:<8} 涨 {r.pct:+.2f}%  距60日高 {r.dd60:+.0f}%  DIF {r.dif_pct:+.2f}%  "
                          f"低点 {r.dip:+.1f}% 反弹 {r.rebound:+.1f}%  20日均额 {r.avg20:.1f}亿 今日量比 {r.amt_ratio:.2f}  {r.tags}")
         lines_all.append("\n".join(lines))
+        parts.append(L.h_section(f"{ev['name']} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{ev['ticker']}</span>",
+                                 f"{ev['date']} {'美股盘后' if ev['type'] == 'after_close' else '北京时间盘中'}{'' if ev.get('confirmed') else ' · 日期为估计'} · {'/'.join(ev['chains'])} · 候选 {len(df)} 只"))
+        for r in df.head(args.top).itertuples():
+            tags = " ".join(f"<span style='padding:1px 5px;border-radius:3px;background:#f0f0ec;color:{L.INK};font-size:11px'>{t}</span>" for t in r.tags.split())
+            parts.append(L.h_card(
+                f"{r.name} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{r.code}</span>", f"<b>{r.score}</b><span style='color:{L.GRAY};font-size:12px'>/5</span>",
+                L.h_kv(("现价", f"{r.price:g}"), ("今日", L.h_pct(r.pct)), ("距60日高", f"{r.dd60:+.0f}%"), ("DIF", f"{r.dif_pct:+.2f}%")),
+                L.h_kv(("低点", f"{r.dip:+.1f}%"), ("反弹", f"{r.rebound:+.1f}%"), ("20日均额", f"{r.avg20:.1f}亿"), ("量比", f"{r.amt_ratio:.2f}")) + "<br>" + tags))
         df.to_csv(os.path.join(HERE, f"事件埋伏_{ev['date']}_{ev['ticker']}.csv"), index=False, encoding="utf-8-sig")
     body = "\n\n".join(lines_all) + ("\n\n事件出结果后次日 08:00 会再发一封盘后反应邮件。规则：次日 10:00 前离场，盘后跌超 2% 开盘直接走。"
                                      "\n这是筛选名单，不是买入建议。")
+    html = L.h_wrap("事件埋伏名单", ["条件：前期龙头（距60日高 ≤ -25%）· MACD 零轴附近（|DIF| ≤ 1% 价）· DIF 上行 · 砸盘被接（日内低点 ≤ -2% 且反弹 ≥ 2%）· 未先涨（< 3%）",
+                                   "得分越高越接近案例形态（科翔 8/26）"], parts,
+                    "事件出结果后次日 07:40 会再发一封盘后反应邮件。规则：次日 10:00 前离场，盘后跌超 2% 开盘直接走。这是筛选名单，不是买入建议。")
     print(body)
     if not args.no_email:
-        L.send_mail(f"【事件埋伏】{'、'.join(e['name'] for e in ev_list)}", body)
+        L.send_mail(f"【事件埋伏】{'、'.join(e['name'] for e in ev_list)}", body, html)
 
 
 # ---------------------------------------------------------------- 盘后反应
@@ -162,17 +175,21 @@ def yahoo_reaction(ticker):
 
 def post_scan(ev_list, args):
     lines = []
+    parts = []
     for ev in ev_list:
         if ev["type"] != "after_close":
             lines.append(f"■ {ev['name']}（{ev['ticker']}）今天北京时间盘中出结果，盘中留意 {'/'.join(ev['chains'])} 板块是否共振，scan_live 会自动抓。")
+            parts.append(L.h_section(ev["name"], "北京时间盘中出结果") + f"<div style='padding:10px 0'>盘中留意 <b>{'/'.join(ev['chains'])}</b> 板块是否共振，scan_live 会自动抓。</div>")
             continue
         try:
             reg, post, last, close = yahoo_reaction(ev["ticker"])
         except Exception as e:
             lines.append(f"■ {ev['name']}（{ev['ticker']}）盘后数据获取失败：{e!r}，请手动看一眼再决定。")
+            parts.append(L.h_section(ev["name"], ev["ticker"]) + "<div style='padding:10px 0'>盘后数据获取失败，请手动看一眼再决定。</div>")
             continue
         if post is None:
             lines.append(f"■ {ev['name']}（{ev['ticker']}）正常时段 {reg:+.2f}%，盘后暂无成交数据，请手动确认。")
+            parts.append(L.h_section(ev["name"], ev["ticker"]) + f"<div style='padding:10px 0'>正常时段 {L.h_pct(reg)}，盘后暂无成交数据，请手动确认。</div>")
             continue
         if post >= 3:
             advice = "盘后大涨 → 按共振日处理：持有到早盘冲高卖，10:00 前离场；未持仓者盘中看 scan_live 的共振信号。"
@@ -181,12 +198,20 @@ def post_scan(ev_list, args):
         else:
             advice = "盘后反应平淡 → 观望，早盘有溢价就走，最晚 10:00 前离场。"
         lines.append(f"■ {ev['name']}（{ev['ticker']}）正常时段 {reg:+.2f}%，盘后 {post:+.2f}%（{close:.2f} → {last:.2f}）\n  {advice}")
+        color = L.RED if post >= 3 else L.GREEN if post <= -2 else "#b8742a"
+        parts.append(L.h_section(ev["name"], ev["ticker"]) +
+                     f"<div style='padding:12px 0;border-bottom:1px solid {L.LINE}'><div style='font-size:26px;font-weight:700;color:{color}'>盘后 {post:+.2f}%</div>"
+                     f"<div style='color:{L.GRAY};font-size:12px;margin-top:2px'>正常时段 {L.h_pct(reg)} · {close:.2f} → {last:.2f}</div>"
+                     f"<div style='margin-top:8px;line-height:1.6'>{advice}</div></div>")
     ov = L.overseas()
-    lines.append("外围：" + "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()))
+    ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items())
+    lines.append("外围：" + ov_line)
     body = "\n\n".join(lines)
+    html = L.h_wrap("事件盘后反应", ["外围 " + " · ".join(f"{k} {L.h_pct(v)}" for k, v in ov.items())], parts,
+                    "盘后 ≥ +3% 按共振日处理，早盘冲高卖；-2% ~ +3% 观望，10:00 前离场；≤ -2% 开盘直接走。")
     print(body)
     if not args.no_email:
-        L.send_mail(f"【事件反应】{'、'.join(e['name'] for e in ev_list)}", body)
+        L.send_mail(f"【事件反应】{'、'.join(e['name'] for e in ev_list)}", body, html)
 
 
 def main():

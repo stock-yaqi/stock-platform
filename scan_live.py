@@ -13,7 +13,7 @@
 
 数据源：腾讯批量行情（全市场涨幅，4 秒）+ 腾讯 1 分钟 K 线（候选股，逐只）；
         20 日均额 / 60 日高点来自本地 mins/ 分钟库，缓存在 mins/_meta/daily_cache.json。
-邮件：  读取同目录 .env 里的 SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ALERT_TO。
+邮件：  读取同目录 .env 里的 SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ALERT_TO（多个收件人用逗号隔开）。
 
 用法：
     python3 scan_live.py                 # 盘中由 launchd 每 5 分钟调用；非交易时段直接退出
@@ -34,6 +34,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, date, timedelta
 from email.header import Header
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 
@@ -67,17 +68,23 @@ def load_env():
     return {k.strip(): v.strip() for k, v in (l.split("=", 1) for l in open(p) if "=" in l and not l.startswith("#"))}
 
 
-def send_mail(subject, body):
+def send_mail(subject, body, html=None):
     env = load_env()
     need = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "ALERT_TO"]
     if any(k not in env for k in need):
         log("未配置 .env 邮件参数，跳过发信")
         return False
     sender = env.get("SMTP_FROM") or env["SMTP_USER"]
-    msg = MIMEText(body, "plain", "utf-8")
+    if html:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
+    else:
+        msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
-    msg["To"] = env["ALERT_TO"]
+    recipients = [x.strip() for x in env["ALERT_TO"].replace("；", ",").replace(";", ",").split(",") if x.strip()]
+    msg["To"] = ", ".join(recipients)
     port = int(env["SMTP_PORT"])
     for attempt in range(3):
         try:
@@ -87,13 +94,62 @@ def send_mail(subject, body):
                     s.ehlo()
                     s.starttls()
                 s.login(env["SMTP_USER"], env["SMTP_PASS"])
-                s.sendmail(sender, [env["ALERT_TO"]], msg.as_string())
+                s.sendmail(sender, recipients, msg.as_string())
             log(f"邮件已发送：{subject}")
             return True
         except Exception as e:
             log(f"发信失败({attempt + 1}/3)：{e!r}")
             time.sleep(3)
     return False
+
+
+# ---------------------------------------------------------------- HTML 邮件排版（手机优先，内联样式）
+RED, GREEN, GRAY, INK, LINE = "#d23f31", "#1f9d55", "#7a7f85", "#1f2429", "#e6e6e3"
+
+
+def h_esc(t):
+    return str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def h_pct(v, digits=2):
+    """涨跌幅：红涨绿跌"""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return f'<span style="color:{GRAY}">—</span>'
+    c = RED if v > 0 else GREEN if v < 0 else GRAY
+    return f'<span style="color:{c};font-weight:600">{v:+.{digits}f}%</span>'
+
+
+def h_wrap(title, meta_lines, parts, note=None):
+    meta = "".join(f'<div style="color:{GRAY};font-size:13px;line-height:1.6">{m}</div>' for m in meta_lines)
+    note_html = (f'<div style="margin-top:18px;padding:10px 12px;background:#f5f5f2;border-radius:6px;color:{GRAY};font-size:12px;line-height:1.6">{note}</div>'
+                 if note else "")
+    return f'''<div style="max-width:640px;margin:0 auto;padding:14px 12px;font-family:-apple-system,'PingFang SC','Helvetica Neue',Arial,sans-serif;color:{INK};font-size:14px">
+<div style="font-size:18px;font-weight:700;line-height:1.3;margin-bottom:6px">{title}</div>
+{meta}
+{"".join(parts)}
+{note_html}
+</div>'''
+
+
+def h_section(title, right=""):
+    return (f'<div style="margin-top:18px;padding-bottom:6px;border-bottom:2px solid {INK};display:flex;justify-content:space-between;align-items:baseline">'
+            f'<span style="font-size:16px;font-weight:700">{title}</span><span style="color:{GRAY};font-size:12px">{right}</span></div>')
+
+
+def h_card(line1_left, line1_right, line2, line3="", badge=""):
+    """一只股票一张卡：第一行 代码名称 | 涨幅；第二行 关键数字；第三行 次要信息"""
+    b = f'<span style="margin-left:6px;padding:1px 6px;border-radius:3px;background:#fff1ef;color:{RED};font-size:11px">{badge}</span>' if badge else ""
+    l3 = f'<div style="color:{GRAY};font-size:12px;margin-top:3px">{line3}</div>' if line3 else ""
+    return (f'<div style="padding:10px 0;border-bottom:1px solid {LINE}">'
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-weight:700;font-size:15px">{line1_left}{b}</span><span style="font-size:15px">{line1_right}</span></div>'
+            f'<div style="margin-top:4px;font-size:13px;line-height:1.5">{line2}</div>{l3}</div>')
+
+
+def h_kv(*pairs):
+    """关键数字：标签灰、数值黑，用两个空格隔开"""
+    return "&nbsp;&nbsp;".join(f'<span style="color:{GRAY}">{k}</span> <b>{v}</b>' for k, v in pairs)
 
 
 # ---------------------------------------------------------------- 本地缓存：20 日均额 / 60 日高点
@@ -244,8 +300,14 @@ def sell_reminder(now, args):
     lines = [f"昨日({data['date']})信号，按规则今天 10:00 前卖出，早盘冲高即走：", ""]
     for s in data["signals"]:
         lines.append(f"  {s['code']} {s['name']}  信号价 {s['price']}  板块 {s['sector']}  突破 {s['breakout_time']}")
+    parts = [h_section("昨日信号", f"{len(data['signals'])} 只")]
+    for s_ in data["signals"]:
+        parts.append(h_card(f"{s_['name']} <span style='color:{GRAY};font-weight:400;font-size:12px'>{s_['code']}</span>", f"信号价 <b>{s_['price']:g}</b>",
+                            h_kv(("板块", s_["sector"]), ("突破", s_["breakout_time"]))))
+    html = h_wrap("卖出提醒 · 10:00 前离场", [f"昨日（{data['date'][:4]}-{data['date'][4:6]}-{data['date'][6:]}）信号，按规则今天早盘冲高即走"], parts,
+                  "隔夜外围大跌时开盘直接走，不等冲高。")
     if not args.no_email:
-        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号今日 10:00 前离场", "\n".join(lines))
+        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号今日 10:00 前离场", "\n".join(lines), html)
     data["sell_reminded"] = True
     json.dump(data, open(last, "w"), ensure_ascii=False)
 
@@ -362,10 +424,24 @@ def scan(args):
         lines.append("")
     lines.append("规则：次日 10:00 前卖出，早盘冲高即走。板块不共振不出手。回测均值 +1.3%/笔（未扣费），胜率 60%。")
     body = "\n".join(lines)
+    parts = []
+    for sec, grp in pd.DataFrame(new).groupby("sector"):
+        r = resonant.loc[sec]
+        parts.append(h_section(f"{sec} {h_pct(r['mean'])}", f"{r['up']:.0f}% 上涨 · {int(r['n'])} 只"))
+        for x in grp.itertuples():
+            parts.append(h_card(
+                f"{x.name} <span style='color:{GRAY};font-weight:400;font-size:12px'>{x.code}</span>", h_pct(x.pct),
+                h_kv(("突破", f"{x.breakout_time} @ {x.breakout_price:g}"), ("分钟量", f"{x.spike_x} 倍"), ("现价", f"{x.price:g}")),
+                h_kv(("首次突破", x.first_breakout), ("20日均额", f"{x.avg20_yi} 亿"), ("距60日高", f"{x.dd60}%")),
+                "前期龙头" if x.leader else ""))
+    ov_warn = " · <span style='color:#b8742a'>隔夜纳指跌超 1.5%，早盘溢价可能偏弱</span>" if ov.get("纳指", 0) <= -1.5 else ""
+    html = h_wrap(f"板块共振信号 · {now:%H:%M}",
+                  [f"{day[:4]}-{day[4:6]}-{day[6:]} · 全市场均涨 {h_pct(mkt)} · 共振板块 {len(resonant)} 个", f"外围 {ov_line}{ov_warn}"],
+                  parts, "卖出规则：次日 10:00 前离场，早盘冲高即走。板块不共振不出手。回测 1300 笔平均 +1.3%/笔（未扣费），胜率 60%。这是信号，不是买入建议。")
     log("新信号 %d 只：%s" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new)))
     print(body)
     if not args.no_email:
-        send_mail(f"【板块共振信号】{now:%H:%M} {len(new)} 只：" + "、".join(f"{x['name']}" for x in new[:6]) + ("…" if len(new) > 6 else ""), body)
+        send_mail(f"【板块共振信号】{now:%H:%M} {len(new)} 只：" + "、".join(f"{x['name']}" for x in new[:6]) + ("…" if len(new) > 6 else ""), body, html)
 
 
 def main():
@@ -387,7 +463,13 @@ def main():
         build_cache()
         return
     if args.test_email:
-        ok = send_mail("【测试】板块共振信号", "邮件通道正常。")
+        html = h_wrap("测试 · 板块共振信号", ["邮件通道正常，这是 HTML 排版样例"],
+                      [h_section(f"电子设备 {h_pct(3.65)}", "91% 上涨 · 561 只"),
+                       h_card(f"德明利 <span style='color:{GRAY};font-weight:400;font-size:12px'>001309</span>", h_pct(7.19),
+                              h_kv(("突破", "10:46 @ 434.6"), ("分钟量", "11.2 倍"), ("现价", "435.4")),
+                              h_kv(("首次突破", "10:44"), ("20日均额", "99.0 亿"), ("距60日高", "-56%")), "前期龙头")],
+                      "卖出规则：次日 10:00 前离场，早盘冲高即走。")
+        ok = send_mail("【测试】板块共振信号", "邮件通道正常。", html)
         sys.exit(0 if ok else 1)
     scan(args)
 
