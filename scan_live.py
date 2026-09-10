@@ -284,11 +284,14 @@ def minutes_between(t1, t2):
     return (h2 * 60 + m2) - (h1 * 60 + m1)
 
 
-def sell_reminder(now, args, ov=None):
-    """09:30-09:45 之间，把上一个交易日的信号发一封卖出提醒（只发一次），带外围快照和处理建议"""
+def sell_reminder(now, args, ov=None, force=False):
+    """次日早盘卖出提醒：09:35 第一封、09:55 最后提醒。逐只拉实时价，给出明确处理结论。"""
     ov = ov or {}
     t = now.strftime("%H:%M")
-    if not ("09:30" <= t <= "09:45"):
+    which = 1 if "09:30" <= t <= "09:45" else 2 if "09:52" <= t <= "09:59" else None
+    if force:
+        which = which or 1
+    if which is None:
         return
     files = sorted(glob.glob(os.path.join(META, "live_signals_*.json")))
     files = [f for f in files if not f.endswith(f"{now:%Y%m%d}.json")]
@@ -296,37 +299,69 @@ def sell_reminder(now, args, ov=None):
         return
     last = files[-1]
     data = json.load(open(last))
-    if not data.get("signals") or data.get("sell_reminded"):
+    key = "sell_reminded" if which == 1 else "sell_reminded2"
+    if not data.get("signals") or (data.get(key) and not force):
         return
-    ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
+    sigs = data["signals"]
+    q = batch_quotes([x["code"] for x in sigs])
+
     worst = min([v for k, v in ov.items() if k in ("日经", "韩国")] + [0])
     nq = ov.get("纳指", 0)
-    if worst <= -1.5 or nq <= -1.5:
-        advice = "外围大跌：开盘直接卖出，不等冲高。"
-        color = GREEN
-    elif worst <= -0.5 or nq <= -0.5:
-        advice = "外围偏弱：早盘有溢价就走，最晚 10:00 前清仓。"
-        color = "#b8742a"
+    ov_bad = worst <= -1.5 or nq <= -1.5
+    ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
+
+    rows = []
+    for x in sigs:
+        s_ = q.get(x["code"], {})
+        price, high, open_ = s_.get("price", 0), s_.get("high", 0), s_.get("prev_close", 0)
+        prem = (price / x["price"] - 1) * 100 if price else None
+        prem_high = (high / x["price"] - 1) * 100 if high else None
+        if ov_bad:
+            act, col = "开盘直接卖", GREEN
+        elif prem is None:
+            act, col = "无行情，按 10:00 前离场执行", GRAY
+        elif prem_high is not None and prem_high <= 0:
+            act, col = "无溢价，直接卖", GREEN
+        elif prem > 0:
+            act, col = f"有溢价 {prem:+.1f}%，现在卖", RED
+        else:
+            act, col = f"早盘曾冲高 {prem_high:+.1f}% 现已回落，直接卖", "#b8742a"
+        rows.append(dict(x, now=price, prem=prem, prem_high=prem_high, act=act, col=col, pct=s_.get("pct")))
+
+    n_prem = sum(1 for r in rows if r["prem"] is not None and r["prem"] > 0)
+    if ov_bad:
+        headline, hcol = "外围大跌，全部开盘直接卖，不等冲高", GREEN
+    elif n_prem == 0:
+        headline, hcol = "没有一只有溢价，全部直接卖", GREEN
+    elif n_prem == len(rows):
+        headline, hcol = "都有溢价，现在就卖，别拿过 10:00", RED
     else:
-        advice = "外围正常：按规则早盘冲高即走，10:00 前离场。"
-        color = RED
-    lines = [f"昨日({data['date']})信号，按规则今天 10:00 前卖出，早盘冲高即走：", f"外围：{ov_line}", f"处理：{advice}", ""]
-    for s in data["signals"]:
-        lines.append(f"  {s['code']} {s['name']}  信号价 {s['price']}  板块 {s['sector']}  突破 {s['breakout_time']}")
-    parts = [h_section("昨日信号", f"{len(data['signals'])} 只")]
-    for s_ in data["signals"]:
-        parts.append(h_card(f"{s_['name']} <span style='color:{GRAY};font-weight:400;font-size:12px'>{s_['code']}</span>", f"信号价 <b>{s_['price']:g}</b>",
-                            h_kv(("板块", s_["sector"]), ("突破", s_["breakout_time"]))))
-    ov_html = " · ".join(f"{k} {h_pct(v)}" for k, v in ov.items()) or "外围数据缺失"
-    parts.insert(0, f"<div style='margin-top:12px;padding:10px 12px;border-left:4px solid {color};background:#f7f7f4'><div style='font-weight:700'>{advice}</div>"
-                    f"<div style='color:{GRAY};font-size:12px;margin-top:3px'>外围 {ov_html}</div></div>")
-    html = h_wrap("卖出提醒 · 10:00 前离场", [f"昨日（{data['date'][:4]}-{data['date'][4:6]}-{data['date'][6:]}）信号，按规则今天早盘冲高即走"], parts,
-                  "外围大跌开盘直接走；外围正常也不要拿过 10:00，溢价集中在前 30 分钟。")
-    subj_tag = "外围大跌，开盘直接走" if (worst <= -1.5 or nq <= -1.5) else "10:00 前离场"
+        headline, hcol = f"{n_prem} 只有溢价现在卖，其余直接卖", "#b8742a"
+    if which == 2:
+        headline = "最后提醒 · " + headline
+
+    lines = [f"{'最后提醒 ' if which == 2 else ''}昨日({data['date']})信号，{now:%H:%M} 实时：", f"处理：{headline}", f"外围：{ov_line}", ""]
+    for r in rows:
+        lines.append(f"  {r['code']} {r['name']}  信号价 {r['price']}  现价 {r['now'] or '-'}  相对信号价 {'-' if r['prem'] is None else f'{r['prem']:+.2f}%'}  "
+                     f"早盘最高 {'-' if r['prem_high'] is None else f'{r['prem_high']:+.2f}%'}  → {r['act']}")
+    parts = [f"<div style='margin-top:12px;padding:12px;border-left:4px solid {hcol};background:#f7f7f4'><div style='font-size:17px;font-weight:700;color:{hcol}'>{headline}</div>"
+             f"<div style='color:{GRAY};font-size:12px;margin-top:4px'>外围 " + (" · ".join(f"{k} {h_pct(v)}" for k, v in ov.items()) or "数据缺失") + f" · {now:%H:%M} 实时价</div></div>",
+             h_section("逐只处理", f"{len(rows)} 只")]
+    for r in rows:
+        parts.append(h_card(f"{r['name']} <span style='color:{GRAY};font-weight:400;font-size:12px'>{r['code']}</span>",
+                            f"<span style='color:{r['col']};font-weight:700'>{r['act']}</span>",
+                            h_kv(("信号价", f"{r['price']:g}"), ("现价", f"{r['now']:g}" if r['now'] else "-"), ("相对信号价", h_pct(r['prem']) if r['prem'] is not None else "-")),
+                            h_kv(("早盘最高", h_pct(r['prem_high']) if r['prem_high'] is not None else "-"), ("今日", h_pct(r['pct']) if r['pct'] is not None else "-"), ("板块", r["sector"]))))
+    html = h_wrap(("最后提醒 · " if which == 2 else "") + "卖出提醒 · 10:00 前离场",
+                  [f"昨日（{data['date'][:4]}-{data['date'][4:6]}-{data['date'][6:]}）信号"], parts,
+                  "溢价集中在开盘后 30 分钟，10:00 之后只会更差；亏损单一样走，不等回本。")
+    subj = f"【{'最后提醒' if which == 2 else '卖出提醒'}】{headline}（昨日 {len(rows)} 只）"
+    print("\n".join(lines))
     if not args.no_email:
-        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号，{subj_tag}", "\n".join(lines), html)
-    data["sell_reminded"] = True
-    json.dump(data, open(last, "w"), ensure_ascii=False)
+        send_mail(subj, "\n".join(lines), html)
+    if not force:
+        data[key] = True
+        json.dump(data, open(last, "w"), ensure_ascii=False)
 
 
 def scan(args):
@@ -538,6 +573,7 @@ def main():
     ap.add_argument("--no-email", action="store_true")
     ap.add_argument("--build-cache", action="store_true")
     ap.add_argument("--test-email", action="store_true")
+    ap.add_argument("--test-sell-reminder", action="store_true", help="用最近一天的信号立刻发一封卖出提醒（不改状态）")
     ap.add_argument("--min-sector", type=float, default=2.0, help="板块等权涨幅下限 %%")
     ap.add_argument("--min-up", type=float, default=80.0, help="板块上涨家数占比下限 %%")
     ap.add_argument("--min-gain", type=float, default=2.0, help="个股当日涨幅下限 %%")
@@ -562,6 +598,9 @@ def main():
                       "卖出规则：次日 10:00 前离场，早盘冲高即走。")
         ok = send_mail("【测试】板块共振信号", "邮件通道正常。", html)
         sys.exit(0 if ok else 1)
+    if args.test_sell_reminder:
+        sell_reminder(datetime.now(), args, overseas(), force=True)
+        return
     lock = acquire_lock()
     if lock is None:
         return  # 上一轮还在跑
