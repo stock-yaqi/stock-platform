@@ -284,8 +284,9 @@ def minutes_between(t1, t2):
     return (h2 * 60 + m2) - (h1 * 60 + m1)
 
 
-def sell_reminder(now, args):
-    """09:30-09:45 之间，把上一个交易日的信号发一封卖出提醒（只发一次）"""
+def sell_reminder(now, args, ov=None):
+    """09:30-09:45 之间，把上一个交易日的信号发一封卖出提醒（只发一次），带外围快照和处理建议"""
+    ov = ov or {}
     t = now.strftime("%H:%M")
     if not ("09:30" <= t <= "09:45"):
         return
@@ -297,17 +298,33 @@ def sell_reminder(now, args):
     data = json.load(open(last))
     if not data.get("signals") or data.get("sell_reminded"):
         return
-    lines = [f"昨日({data['date']})信号，按规则今天 10:00 前卖出，早盘冲高即走：", ""]
+    ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
+    worst = min([v for k, v in ov.items() if k in ("日经", "韩国")] + [0])
+    nq = ov.get("纳指", 0)
+    if worst <= -1.5 or nq <= -1.5:
+        advice = "外围大跌：开盘直接卖出，不等冲高。"
+        color = GREEN
+    elif worst <= -0.5 or nq <= -0.5:
+        advice = "外围偏弱：早盘有溢价就走，最晚 10:00 前清仓。"
+        color = "#b8742a"
+    else:
+        advice = "外围正常：按规则早盘冲高即走，10:00 前离场。"
+        color = RED
+    lines = [f"昨日({data['date']})信号，按规则今天 10:00 前卖出，早盘冲高即走：", f"外围：{ov_line}", f"处理：{advice}", ""]
     for s in data["signals"]:
         lines.append(f"  {s['code']} {s['name']}  信号价 {s['price']}  板块 {s['sector']}  突破 {s['breakout_time']}")
     parts = [h_section("昨日信号", f"{len(data['signals'])} 只")]
     for s_ in data["signals"]:
         parts.append(h_card(f"{s_['name']} <span style='color:{GRAY};font-weight:400;font-size:12px'>{s_['code']}</span>", f"信号价 <b>{s_['price']:g}</b>",
                             h_kv(("板块", s_["sector"]), ("突破", s_["breakout_time"]))))
+    ov_html = " · ".join(f"{k} {h_pct(v)}" for k, v in ov.items()) or "外围数据缺失"
+    parts.insert(0, f"<div style='margin-top:12px;padding:10px 12px;border-left:4px solid {color};background:#f7f7f4'><div style='font-weight:700'>{advice}</div>"
+                    f"<div style='color:{GRAY};font-size:12px;margin-top:3px'>外围 {ov_html}</div></div>")
     html = h_wrap("卖出提醒 · 10:00 前离场", [f"昨日（{data['date'][:4]}-{data['date'][4:6]}-{data['date'][6:]}）信号，按规则今天早盘冲高即走"], parts,
-                  "隔夜外围大跌时开盘直接走，不等冲高。")
+                  "外围大跌开盘直接走；外围正常也不要拿过 10:00，溢价集中在前 30 分钟。")
+    subj_tag = "外围大跌，开盘直接走" if (worst <= -1.5 or nq <= -1.5) else "10:00 前离场"
     if not args.no_email:
-        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号今日 10:00 前离场", "\n".join(lines), html)
+        send_mail(f"【卖出提醒】昨日 {len(data['signals'])} 只信号，{subj_tag}", "\n".join(lines), html)
     data["sell_reminded"] = True
     json.dump(data, open(last, "w"), ensure_ascii=False)
 
@@ -317,10 +334,9 @@ def scan(args):
     today = f"{now:%Y%m%d}"
     if not args.now and not in_trading_window(now):
         return
-    sell_reminder(now, args)
-
     ov = overseas()
     ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
+    sell_reminder(now, args, ov)
     if not args.ignore_overseas:
         bad = [k for k in ("日经", "韩国") if ov.get(k, 0) <= -args.max_overseas_drop]
         if bad:
