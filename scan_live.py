@@ -374,9 +374,38 @@ def scan(args):
     sell_reminder(now, args, ov)
     if not args.ignore_overseas:
         bad = [k for k in ("日经", "韩国") if ov.get(k, 0) <= -args.max_overseas_drop]
+        marker = os.path.join(META, f"overseas_stop_{today}.json")
         if bad:
             log(f"外围大跌（{ov_line}），{'/'.join(bad)} 跌幅超过 {args.max_overseas_drop}%，按规则今天停手")
+            if not os.path.exists(marker) and not args.now:
+                json.dump({"time": now.strftime("%H:%M"), "ov": ov, "bad": bad}, open(marker, "w"), ensure_ascii=False)
+                why = "、".join(f"{k} {ov[k]:+.2f}%" for k in bad)
+                body = (f"{now:%Y-%m-%d %H:%M}  外围大跌，今天不发共振信号。\n\n外围：{ov_line}\n触发：{why}（阈值 -{args.max_overseas_drop:g}%）\n\n"
+                        f"依据：日经或韩国当天跌超 1.5% 的日子，出现共振板块的概率只有 15%（正常日 77%），勉强做平均为负。\n"
+                        f"今天只有卖出提醒会照常发。如果盘中日韩跌幅收窄回到阈值内，扫描会自动恢复并另发一封通知。")
+                parts = [f"<div style='margin-top:12px;padding:12px;border-left:4px solid {GREEN};background:#f7f7f4'>"
+                         f"<div style='font-size:17px;font-weight:700;color:{GREEN}'>今天不发共振信号</div>"
+                         f"<div style='color:{GRAY};font-size:12px;margin-top:4px'>触发 {why} · 阈值 -{args.max_overseas_drop:g}%</div></div>",
+                         h_section("外围", now.strftime("%H:%M")),
+                         "".join(f"<div style='padding:8px 0;border-bottom:1px solid {LINE};display:flex;justify-content:space-between'><span>{k}</span>{h_pct(v)}</div>" for k, v in ov.items())]
+                html = h_wrap("外围大跌 · 今日停手", [f"{now:%Y-%m-%d} {now:%H:%M}"], parts,
+                              "依据：日经或韩国当天跌超 1.5% 的日子，出现共振板块的概率只有 15%（正常日 77%），勉强做平均为负。今天只有卖出提醒照常发；若盘中日韩收窄回到阈值内，扫描自动恢复并另发通知。")
+                if not args.no_email:
+                    send_mail(f"【今日停手】外围大跌，不发共振信号（{why}）", body, html)
             return
+        if os.path.exists(marker) and not args.now:
+            m = json.load(open(marker))
+            if not m.get("resumed"):
+                m["resumed"] = now.strftime("%H:%M")
+                json.dump(m, open(marker, "w"), ensure_ascii=False)
+                log(f"外围跌幅收窄（{ov_line}），恢复扫描")
+                body = f"{now:%Y-%m-%d %H:%M}  日韩跌幅收窄回到阈值内，扫描恢复。\n\n外围：{ov_line}\n\n注意：外围整体仍偏弱的日子，共振板块出现概率偏低，出信号也要更谨慎。"
+                html = h_wrap("扫描恢复", [f"{now:%Y-%m-%d} {now:%H:%M} · 日韩跌幅收窄回到阈值内"],
+                              [h_section("外围", now.strftime("%H:%M")),
+                               "".join(f"<div style='padding:8px 0;border-bottom:1px solid {LINE};display:flex;justify-content:space-between'><span>{k}</span>{h_pct(v)}</div>" for k, v in ov.items())],
+                              "外围整体仍偏弱的日子，共振板块出现概率偏低，出信号也要更谨慎。")
+                if not args.no_email:
+                    send_mail("【扫描恢复】日韩跌幅收窄，恢复共振扫描", body, html)
 
     industry = json.load(open(os.path.join(META, "industry_em.json")))
     stocklist = json.load(open(os.path.join(META, "stocklist.json")))["stocks"]
