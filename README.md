@@ -58,7 +58,7 @@ python3 scan_inflow.py --no-filter         # 输出全部股票指标
 
 结果输出到 `资金进场_<板块>_<日期>.csv`，含全部股票的指标和「命中」列。
 
-**定时任务**：launchd 每周一到周五 15:10 运行 `daily_job.sh`（依次 `mins_sync.py` 同步分钟数据、`scan_live.py --build-cache` 重建缓存、`scan_avoid.py` 回避名单；`scan_inflow.py` 回测为负期望，已不在每日任务里，需要时手动跑），配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
+**定时任务**：launchd 每周一到周五 15:10 用 python3 运行 `daily_job.py`（依次 `mins_sync.py` 同步分钟数据、`scan_live.py --build-cache` 重建缓存、`scan_avoid.py` 回避名单）。不要用 zsh 脚本做 launchd 入口：macOS 不给 launchd 起的 zsh 访问 ~/Documents 的权限，会报 exit 127「can't open input file」，python3 已有权限。`daily_job.sh` 只供手动运行。`scan_inflow.py` 回测为负期望，不在每日任务里，配置文件 `~/Library/LaunchAgents/com.qyhdt.stock-mins-sync.plist`。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-mins-sync | head        # 查看状态
@@ -144,3 +144,20 @@ python3 scan_avoid.py --watch 601868 000001 # 自选/持仓命中单独标出；
 ```
 
 输出 `回避名单_<日期>.csv`，每天 15:10 的 daily_job.sh 在同步分钟数据后自动跑并发邮件。
+
+### scan_brief.py — 每日早报（工作日 08:30）
+
+把外围、宏观、事件、昨日 A 股汇总成一句「今日态度」，盘中信号在这个态度下执行：
+
+- 停手：日经或韩国早盘跌 ≥ 1.5%，或纳指隔夜跌 ≥ 1.5%。
+- 谨慎：日韩或纳指跌 ≥ 0.8%、原油单日涨 ≥ 3%、美元指数涨 ≥ 0.5%、美债 10 年升 ≥ 8bp、昨日 A 股 ≥ 90% 下跌，任一触发。谨慎日只做白名单里最强的板块，仓位减半。
+- 常规：都没触发。
+- 另标今天 / 明天的日历事件（财报、议息）。
+
+正文含日韩台港、美股三大指数、纳指期货、美元指数、美债 10 年、原油、黄金、离岸人民币，昨日 A 股涨跌分布、最强最弱板块、白名单板块近 3 日、回避名单数量。
+
+```bash
+python3 scan_brief.py --no-email
+```
+
+定时任务 `~/Library/LaunchAgents/com.qyhdt.stock-brief.plist`。宏观因素只用来决定「今天做不做、做哪个方向」，不进个股信号（回测证明进了没有预测力）。
