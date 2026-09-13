@@ -90,6 +90,13 @@ def pre_scan(ev_list, args):
     lines_all = []
     parts = []
     for ev in ev_list:
+        if ev["type"] == "macro":
+            txt = (f"■ {ev['date']} {ev['name']}：北京时间明天凌晨出结果。{ev.get('note', '')}\n"
+                   "  宏观事件影响整个市场而不是某个板块，本策略不做事件前埋伏。今晚持仓注意隔夜风险，明早 07:40 会发美股反应。")
+            lines_all.append(txt)
+            parts.append(L.h_section(ev["name"], f"{ev['date']} 美东 · 北京时间次日凌晨") +
+                         f"<div style='padding:10px 0;line-height:1.6'>{ev.get('note', '')}<br><span style='color:{L.GRAY}'>宏观事件影响整个市场而不是某个板块，本策略不做事件前埋伏。今晚持仓注意隔夜风险，明早 07:40 发美股反应。</span></div>")
+            continue
         codes = [c for c in chain_codes(chains, ev["chains"], industry) if cache.get(c, {}).get("avg20", 0) >= args.min_amt * 1e8]
         q = L.batch_quotes(codes)
         rows = []
@@ -177,6 +184,26 @@ def post_scan(ev_list, args):
     lines = []
     parts = []
     for ev in ev_list:
+        if ev["type"] == "macro":
+            try:
+                res = {}
+                for tk, nm in [("%5EIXIC", "纳斯达克"), ("%5EGSPC", "标普500"), ("NQ%3DF", "纳指期货"), ("DX-Y.NYB", "美元指数"), ("%5ETNX", "美债10年")]:
+                    m = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=2d&interval=5m&includePrePost=true",
+                                     headers={"User-Agent": "Mozilla/5.0"}, proxies=PROXY, timeout=30).json()["chart"]["result"][0]["meta"]
+                    base = m.get("chartPreviousClose") or m.get("previousClose")
+                    res[nm] = (m["regularMarketPrice"] / base - 1) * 100 if base else float("nan")
+                txt = "  ".join(f"{k} {v:+.2f}%" for k, v in res.items())
+                nq = res.get("纳斯达克", 0)
+                advice = ("美股大跌，今天亚太大概率跟跌，外围过滤可能触发停手；有持仓开盘直接走。" if nq <= -1.5 else
+                          "美股大涨，今天出现共振板块的概率偏高，盘中留意信号。" if nq >= 1.5 else "美股反应平淡，按常规流程。")
+                lines.append(f"■ {ev['name']}：{txt}\n  {advice}")
+                parts.append(L.h_section(ev["name"], "美股收盘反应") + "".join(
+                    f"<div style='padding:8px 0;border-bottom:1px solid {L.LINE};display:flex;justify-content:space-between'><span>{k}</span>{L.h_pct(v)}</div>" for k, v in res.items())
+                    + f"<div style='padding:10px 0;line-height:1.6'>{advice}</div>")
+            except Exception as e:
+                lines.append(f"■ {ev['name']}：美股数据获取失败 {e!r}")
+                parts.append(L.h_section(ev["name"], "") + "<div style='padding:10px 0'>美股数据获取失败，请手动看。</div>")
+            continue
         if ev["type"] != "after_close":
             lines.append(f"■ {ev['name']}（{ev['ticker']}）今天北京时间盘中出结果，盘中留意 {'/'.join(ev['chains'])} 板块是否共振，scan_live 会自动抓。")
             parts.append(L.h_section(ev["name"], "北京时间盘中出结果") + f"<div style='padding:10px 0'>盘中留意 <b>{'/'.join(ev['chains'])}</b> 板块是否共振，scan_live 会自动抓。</div>")
@@ -241,7 +268,7 @@ def main():
         d = args.date or f"{now:%Y-%m-%d}"
         # 盘中事件（台积电）前一天 14:00 也发埋伏：把 date 为明天的 intraday 事件一起算
         tomorrow = (datetime.strptime(d, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-        ev = [e for e in events if (e["date"] == d and e["type"] == "after_close") or (e["date"] == tomorrow and e["type"] == "intraday")]
+        ev = [e for e in events if (e["date"] == d and e["type"] in ("after_close", "macro")) or (e["date"] == tomorrow and e["type"] == "intraday")]
         if not ev:
             L.log(f"{d} 无事件，跳过埋伏扫描")
             return
@@ -250,7 +277,7 @@ def main():
     else:
         d = args.date or (now - timedelta(days=1)).strftime("%Y-%m-%d")
         today = f"{now:%Y-%m-%d}"
-        ev = [e for e in events if (e["date"] == d and e["type"] == "after_close") or (e["date"] == today and e["type"] == "intraday")]
+        ev = [e for e in events if (e["date"] == d and e["type"] in ("after_close", "macro")) or (e["date"] == today and e["type"] == "intraday")]
         if not ev:
             L.log(f"{d} 无盘后事件，跳过反应邮件")
             return
