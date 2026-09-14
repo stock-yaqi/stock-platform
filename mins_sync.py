@@ -14,7 +14,7 @@ CSV 列：time,open,high,low,close,volume_hand,amount
 
 数据源：
     主源  通达信行情服务器（pytdx），1 分钟 K 线可回溯约 4 个多月，不需要 cookie
-    次选  腾讯 1 分钟 K 线（320 根≈1.3 天，快），通达信不通时用于每日同步
+    次选  腾讯 1 分钟 K 线（320 根≈1.3 天，快），通达信不通时用于每日同步；不含成交额，用收盘价×成交量近似
     兜底  新浪 1 分钟 K 线（最多约 6 个交易日），北交所股票、以及腾讯覆盖不到的旧日
 
 用法：
@@ -203,7 +203,12 @@ def fetch_tencent(code: str, ex: str, want_days: int, stop_dates: set):
             days = defaultdict(list)
             for b in bars:
                 d = b[0][:8]
-                days[d].append((f"{b[0][8:10]}:{b[0][10:12]}", float(b[1]), float(b[3]), float(b[4]), float(b[2]), float(b[5]), 0.0))
+                hm = f"{b[0][8:10]}:{b[0][10:12]}"
+                if hm == "09:30":
+                    continue  # 腾讯多一根集合竞价 09:30，统一为通达信口径 09:31 起 240 根
+                o, c, h, l, v = float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])
+                # 腾讯分钟线不给成交额，用 收盘价 × 成交量 近似（单位元；v 为手）
+                days[d].append((hm, o, h, l, c, v, round(c * v * 100)))
             if not days:
                 return {}
             latest = max(days)
