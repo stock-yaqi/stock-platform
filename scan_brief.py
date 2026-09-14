@@ -256,7 +256,7 @@ def main():
                   "  最弱：" + "  ".join(f"{i} {r.r1:+.2f}%" for i, r in a["bottom"].iterrows()),
                   "  白名单板块近3日：" + "  ".join(f"{i} {r.r3:+.2f}%（昨日 {r.r1:+.2f}%，{r.up:.0f}% 上涨）" for i, r in a["white"].iterrows())]
     if w is not None:
-        top = w["df"].sort_values("strong_streak", ascending=False)
+        top = w["df"].sort_values(["strong_streak", "r3"], ascending=False)
         lines += ["", f"板块观察（到 {w['last_day']}）：连续走强天数 = 连续「涨>=1.5% 且 >=70% 上涨」的天数"]
         lines += [f"  {r.sec:<8} 昨日 {r.r1:+.2f}%({r.up1:.0f}%上涨)  近3日 {r.r3:+.2f}%  近10日 {r.r10:+.2f}%  连续走强 {r.strong_streak} 天  10日内走强 {r.strong_days10} 天/共振 {r.reson_days10} 天{'  [白名单]' if r.in_wl else ''}"
                   for r in top.head(8).itertuples()]
