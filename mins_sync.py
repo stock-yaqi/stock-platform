@@ -14,7 +14,8 @@ CSV 列：time,open,high,low,close,volume_hand,amount
 
 数据源：
     主源  通达信行情服务器（pytdx），1 分钟 K 线可回溯约 4 个多月，不需要 cookie
-    兜底  新浪 1 分钟 K 线（最多约 6 个交易日），用于北交所股票和通达信失败的股票
+    次选  腾讯 1 分钟 K 线（320 根≈1.3 天，快），通达信不通时用于每日同步
+    兜底  新浪 1 分钟 K 线（最多约 6 个交易日），北交所股票、以及腾讯覆盖不到的旧日
 
 用法：
     python3 mins_sync.py                    # 每日模式：补最近 3 个交易日，已有的完整日期不重复拉；非交易日自动跳过
@@ -191,6 +192,34 @@ def fetch_tdx(code: str, market: int, want_days: int, stop_dates: set):
     return None
 
 
+# ---------------------------------------------------------------- 腾讯（通达信不通时的首选：320 根≈1.3 天，快）
+def fetch_tencent(code: str, ex: str, want_days: int, stop_dates: set):
+    """腾讯 1 分钟 K 线，最多 320 根。只返回整日（240 根）的日期，最新一天允许不足（盘中运行时）。"""
+    sym = ex + code
+    url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={sym},m1,,320"
+    for attempt in range(3):
+        try:
+            bars = http.get(url, headers=UA, timeout=15).json()["data"][sym]["m1"]
+            days = defaultdict(list)
+            for b in bars:
+                d = b[0][:8]
+                days[d].append((f"{b[0][8:10]}:{b[0][10:12]}", float(b[1]), float(b[3]), float(b[4]), float(b[2]), float(b[5]), 0.0))
+            if not days:
+                return {}
+            latest = max(days)
+            out = {}
+            for d in sorted(days, reverse=True):
+                if d in stop_dates or len(out) >= want_days:
+                    break
+                if d != latest and len(days[d]) < FULL_DAY_BARS:
+                    continue  # 被 320 根截断的不完整日，留给新浪补
+                out[d] = sorted(days[d])
+            return out
+        except Exception:
+            time.sleep(1 + attempt)
+    return None
+
+
 # ---------------------------------------------------------------- 新浪兜底
 def fetch_sina(code: str, ex: str, want_days: int, stop_dates: set):
     """新浪 1 分钟 K 线，一次最多 1500 根（约 6 个交易日），成交量单位股"""
@@ -253,10 +282,16 @@ def sync_one(stock: dict, want_days: int, full: bool):
     code, ex = stock["code"], stock["ex"]
     stop = set() if full else complete_dates(code)
     days = None
-    if ex in ("sh", "sz"):
+    if ex in ("sh", "sz") and _hosts:
         days = fetch_tdx(code, 1 if ex == "sh" else 0, want_days, stop)
     if not days:
-        days = fetch_sina(code, ex, want_days, stop)
+        # 通达信不可用：先腾讯（快，覆盖最新 1 天多），不够再新浪补齐旧日
+        days = fetch_tencent(code, ex, want_days, stop) or {}
+        if len(days) < want_days and not (stop and any(d in stop for d in days)):
+            older = fetch_sina(code, ex, want_days, stop | set(days)) or {}
+            days = {**older, **days}
+    if not days and days is not None and days == {}:
+        return code, 0
     if days is None:
         return code, None
     return code, write_days(code, days)
