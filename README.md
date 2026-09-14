@@ -174,4 +174,5 @@ python3 scan_brief.py --no-email
 - 代码从笔记本 `git push studio main` 推过去（远端 `receive.denyCurrentBranch=updateInstead`），远端 GitHub 不稳定不依赖它。数据目录 `mins/` 用 rsync 同步一次，之后远端自己每天同步。
 - macOS 不允许 launchd 起的进程访问外接卷（`ls /Volumes/NewVolume/...` 报 Operation not permitted，软链接也绕不过），但 sshd 起的进程有完整磁盘权限。所以远端用 `install_launchd.py --scheduler-ssh` 装一个 KeepAlive 的 launchd 任务，它通过 `ssh localhost` 启动 `scheduler.py` 常驻调度：调度器挂了 30 秒内自动拉起，机器重启（自动登录）后自动启动。launchd 任务自己的日志必须放 `~/Library/Logs/`，放在卷上会以 78 EX_CONFIG 起不来。
 - 查看：`ssh sales@192.168.3.21 'cd /Volumes/NewVolume/stock-a && ./run.sh scheduler.py --status; tail -5 mins/_logs/scheduler.log'`。
+- 远端 Python：`/Volumes/NewVolume/stock-a/.venv`（brew python3.13 建的虚拟环境，pandas 3.x）。`run.sh` 优先用它。brew 的 python@3.12（3.12.14）在 macOS 26 上 `platform.mac_ver()` 返回空导致 pip 崩溃，不能用；3.13 正常。建 venv 要用 `--without-pip` 再用 brew pip 的 `--python` 参数装包，因为 ensurepip 在这台机器上失败。
 - `install_launchd.py` 仍可用于代码放在用户目录内的机器。
