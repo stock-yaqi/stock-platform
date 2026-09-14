@@ -15,7 +15,7 @@
     python3 scan_events.py --pre  [--date 2026-09-30] [--no-email]   # 手动跑埋伏名单
     python3 scan_events.py --post [--date 2026-09-30] [--no-email]   # 手动跑反应
     python3 scan_events.py --list            # 列出未来事件
-依赖：scan_live.py 同目录（复用邮件 / 行情 / 缓存），.env 邮件配置，代理 127.0.0.1:10809（雅虎）
+依赖：scan_live.py 同目录（复用邮件 / 行情 / 缓存），.env 邮件配置；雅虎先直连，失败走 .env 的 PROXY
 """
 import argparse
 import json
@@ -31,7 +31,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import scan_live as L  # noqa: E402
 
-PROXY = {"http": "http://127.0.0.1:10809", "https": "http://127.0.0.1:10809"}
 ROOT = L.ROOT
 
 
@@ -160,8 +159,7 @@ def pre_scan(ev_list, args):
 # ---------------------------------------------------------------- 盘后反应
 def yahoo_reaction(ticker):
     """返回 (正常时段涨跌%, 盘后涨跌%, 盘后最新价, 正常收盘价)"""
-    j = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=2d&interval=5m&includePrePost=true",
-                     headers={"User-Agent": "Mozilla/5.0"}, proxies=PROXY, timeout=30).json()["chart"]["result"][0]
+    j = L.yget(f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=2d&interval=5m&includePrePost=true", 30).json()["chart"]["result"][0]
     m = j["meta"]
     reg_close = m["regularMarketPrice"]
     reg_pct = m.get("regularMarketChangePercent")
@@ -188,8 +186,7 @@ def post_scan(ev_list, args):
             try:
                 res = {}
                 for tk, nm in [("%5EIXIC", "纳斯达克"), ("%5EGSPC", "标普500"), ("NQ%3DF", "纳指期货"), ("DX-Y.NYB", "美元指数"), ("%5ETNX", "美债10年")]:
-                    m = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=2d&interval=5m&includePrePost=true",
-                                     headers={"User-Agent": "Mozilla/5.0"}, proxies=PROXY, timeout=30).json()["chart"]["result"][0]["meta"]
+                    m = L.yget(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=2d&interval=5m&includePrePost=true", 30).json()["chart"]["result"][0]["meta"]
                     base = m.get("chartPreviousClose") or m.get("previousClose")
                     res[nm] = (m["regularMarketPrice"] / base - 1) * 100 if base else float("nan")
                 txt = "  ".join(f"{k} {v:+.2f}%" for k, v in res.items())

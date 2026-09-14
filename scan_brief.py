@@ -9,7 +9,7 @@
     常规   以上都没触发
     另标   今天 / 明天的日历事件
 
-数据源：新浪（日韩台港、美股收盘、原油、黄金、离岸人民币）、雅虎（纳指期货、美元指数、美债 10 年，走代理）、本地 mins（昨日 A 股）、events.json。
+数据源：新浪（日韩台港、美股收盘、原油、黄金、离岸人民币）、雅虎（纳指期货、美元指数、美债 10 年，先直连，失败走 .env 的 PROXY）、本地 mins（昨日 A 股）、events.json。
 
 用法：
     python3 scan_brief.py             # 发邮件
@@ -30,7 +30,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import scan_live as L  # noqa: E402
 
-PROXY = {"http": "http://127.0.0.1:10809", "https": "http://127.0.0.1:10809"}
 WHITELIST = ["电子设备", "有色金属", "农林牧渔"]
 
 
@@ -72,8 +71,7 @@ def yahoo():
     out = {}
     for tk, nm in [("NQ%3DF", "纳指期货"), ("DX-Y.NYB", "美元指数"), ("%5ETNX", "美债10年")]:
         try:
-            m = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=5d&interval=1d",
-                             headers={"User-Agent": "Mozilla/5.0"}, proxies=PROXY, timeout=20).json()["chart"]["result"][0]["meta"]
+            m = L.yget(f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?range=5d&interval=1d", 20).json()["chart"]["result"][0]["meta"]
             price = m["regularMarketPrice"]
             base = m.get("chartPreviousClose") or m.get("previousClose") or price
             out[nm] = (price, (price / base - 1) * 100, price - base)
