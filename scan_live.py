@@ -52,6 +52,21 @@ http = requests.Session()
 http.trust_env = False
 
 
+def yget(url, timeout=20):
+    """访问境外接口（雅虎等）：先直连，失败再走 .env 里的 PROXY（如 http://127.0.0.1:10809）。Mac Studio 直连可通，笔记本需要代理。"""
+    hdr = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, headers=hdr, proxies={"http": None, "https": None}, timeout=timeout)
+        if r.status_code == 200:
+            return r
+    except Exception:
+        pass
+    p = load_env().get("PROXY") or os.environ.get("STOCK_PROXY")
+    if p:
+        return requests.get(url, headers=hdr, proxies={"http": p, "https": p}, timeout=timeout + 10)
+    raise RuntimeError(f"直连失败且未配置 PROXY：{url[:60]}")
+
+
 def log(msg):
     line = f"{datetime.now():%m-%d %H:%M:%S} {msg}"
     print(line, flush=True)
