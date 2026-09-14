@@ -100,7 +100,74 @@ def send_mail(subject, body, html=None):
         except Exception as e:
             log(f"发信失败({attempt + 1}/3)：{e!r}")
             time.sleep(3)
+    # 发不出去就进队列，之后每分钟的扫描会自动补发（电脑睡眠 / VPN 掉线时常见）
+    try:
+        qdir = os.path.join(META, "mail_queue")
+        os.makedirs(qdir, exist_ok=True)
+        json.dump({"subject": subject, "body": body, "html": html, "created": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                  open(os.path.join(qdir, f"{datetime.now():%Y%m%d_%H%M%S_%f}.json"), "w"), ensure_ascii=False)
+        log("已存入待发队列")
+    except Exception as e:
+        log(f"写入队列失败：{e!r}")
     return False
+
+
+def flush_mail_queue(max_age_hours=12):
+    """补发队列里的邮件；超过 max_age_hours 的直接丢弃（早报/提醒过期没意义）"""
+    qdir = os.path.join(META, "mail_queue")
+    if not os.path.isdir(qdir):
+        return
+    for f in sorted(glob.glob(os.path.join(qdir, "*.json"))):
+        try:
+            m = json.load(open(f))
+            created = datetime.strptime(m["created"], "%Y-%m-%d %H:%M")
+            if (datetime.now() - created).total_seconds() > max_age_hours * 3600:
+                os.remove(f)
+                log(f"队列邮件过期丢弃：{m['subject']}")
+                continue
+            tag = f"（{m['created'][11:]} 生成，延迟发送）"
+            html = m["html"]
+            if html:
+                html = html.replace("</div>\n</div>", f"</div><div style='color:#7a7f85;font-size:12px;margin-top:8px'>本邮件 {m['created']} 生成，因电脑睡眠或网络中断延迟发送。</div>\n</div>", 1)
+            if _send_now(m["subject"] + tag, m["body"] + f"\n\n[本邮件 {m['created']} 生成，延迟发送]", html):
+                os.remove(f)
+            else:
+                break  # 网络还没好，下一轮再试
+        except Exception as e:
+            log(f"补发队列失败：{e!r}")
+            break
+
+
+def _send_now(subject, body, html=None):
+    env = load_env()
+    need = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "ALERT_TO"]
+    if any(k not in env for k in need):
+        return False
+    sender = env.get("SMTP_FROM") or env["SMTP_USER"]
+    if html:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
+    else:
+        msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
+    recipients = [x.strip() for x in env["ALERT_TO"].replace("；", ",").replace(";", ",").split(",") if x.strip()]
+    msg["To"] = ", ".join(recipients)
+    port = int(env["SMTP_PORT"])
+    try:
+        cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+        with cls(env["SMTP_HOST"], port, timeout=30) as s:
+            if port != 465:
+                s.ehlo()
+                s.starttls()
+            s.login(env["SMTP_USER"], env["SMTP_PASS"])
+            s.sendmail(sender, recipients, msg.as_string())
+        log(f"补发成功：{subject}")
+        return True
+    except Exception as e:
+        log(f"补发失败：{e!r}")
+        return False
 
 
 # ---------------------------------------------------------------- HTML 邮件排版（手机优先，内联样式）
@@ -634,6 +701,8 @@ def main():
     if lock is None:
         return  # 上一轮还在跑
     t0 = time.time()
+    if not args.no_email:
+        flush_mail_queue()
     scan(args)
     if in_trading_window(datetime.now()) or args.now:
         log(f"本轮耗时 {time.time() - t0:.1f}s")
