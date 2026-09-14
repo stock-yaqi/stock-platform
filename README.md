@@ -172,5 +172,6 @@ python3 scan_brief.py --no-email
 ### 部署到常开的 Mac Studio（/Volumes/NewVolume/stock-a）
 
 - 代码从笔记本 `git push studio main` 推过去（远端 `receive.denyCurrentBranch=updateInstead`），远端 GitHub 不稳定不依赖它。数据目录 `mins/` 用 rsync 同步一次，之后远端自己每天同步。
-- macOS 不允许 launchd 起的进程访问外接卷（`ls /Volumes/NewVolume/...` 报 Operation not permitted），但 SSH 会话起的进程有完整磁盘权限。所以远端不用 launchd，用 `scheduler.py` 常驻调度：`ssh sales@192.168.3.21 'cd /Volumes/NewVolume/stock-a && nohup /opt/homebrew/bin/python3.12 scheduler.py >/dev/null 2>&1 &'`。重启后需要再启动一次。
+- macOS 不允许 launchd 起的进程访问外接卷（`ls /Volumes/NewVolume/...` 报 Operation not permitted，软链接也绕不过），但 sshd 起的进程有完整磁盘权限。所以远端用 `install_launchd.py --scheduler-ssh` 装一个 KeepAlive 的 launchd 任务，它通过 `ssh localhost` 启动 `scheduler.py` 常驻调度：调度器挂了 30 秒内自动拉起，机器重启（自动登录）后自动启动。launchd 任务自己的日志必须放 `~/Library/Logs/`，放在卷上会以 78 EX_CONFIG 起不来。
+- 查看：`ssh sales@192.168.3.21 'cd /Volumes/NewVolume/stock-a && ./run.sh scheduler.py --status; tail -5 mins/_logs/scheduler.log'`。
 - `install_launchd.py` 仍可用于代码放在用户目录内的机器。
