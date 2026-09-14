@@ -63,7 +63,9 @@ def install_scheduler_ssh():
          "ProgramArguments": ["/usr/bin/ssh", "-i", key, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "localhost",
                               f"cd {HERE} && exec ./run.sh scheduler.py"],
          "KeepAlive": True, "RunAtLoad": True, "ThrottleInterval": 30,
-         "StandardOutPath": os.path.join(LOGS, "scheduler_launchd.out"), "StandardErrorPath": os.path.join(LOGS, "scheduler_launchd.err")}
+         # 日志必须放在用户目录：launchd 打不开外接卷上的日志文件会直接以 78 EX_CONFIG 拒绝启动
+         "StandardOutPath": os.path.expanduser("~/Library/Logs/stock-scheduler.out"),
+         "StandardErrorPath": os.path.expanduser("~/Library/Logs/stock-scheduler.err")}
     path = os.path.join(AGENTS, SCHED_LABEL + ".plist")
     sh("launchctl", "bootout", f"gui/{UID}/{SCHED_LABEL}")
     with open(path, "wb") as f:
