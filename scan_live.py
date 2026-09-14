@@ -338,6 +338,16 @@ def overseas():
         return {}
 
 
+def load_whitelist(default_csv):
+    """白名单板块：优先读同目录 sectors.txt（一行一个，# 开头为注释），没有就用 --sectors 默认值"""
+    p = os.path.join(HERE, "sectors.txt")
+    if os.path.exists(p):
+        names = {l.strip() for l in open(p, encoding="utf-8") if l.strip() and not l.startswith("#")}
+        if names:
+            return names
+    return {x.strip() for x in default_csv.split(",") if x.strip()}
+
+
 def find_breakout(bars, spike):
     """返回 [(time, close, vol, multiple)]：分钟量 >= spike 倍当日到此刻中位数 且 收盘 >= 此前当日最高"""
     res = []
@@ -522,7 +532,7 @@ def scan(args):
     if resonant.empty:
         return
     if not args.all_sectors:
-        allow = {x.strip() for x in args.sectors.split(",") if x.strip()}
+        allow = load_whitelist(args.sectors)
         skipped = [x for x in resonant.index if x not in allow]
         resonant = resonant[resonant.index.isin(allow)]
         if skipped:

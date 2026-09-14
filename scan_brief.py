@@ -30,7 +30,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import scan_live as L  # noqa: E402
 
-WHITELIST = ["电子设备", "有色金属", "农林牧渔"]
+WHITELIST = sorted(L.load_whitelist("电子设备,有色金属,农林牧渔"))
+STRONG_RET, STRONG_UP = 1.5, 70      # 「走强」：板块等权涨 >= 1.5% 且 >= 70% 上涨
+RESON_RET, RESON_UP = 2.0, 80        # 「共振」：>= 2% 且 >= 80%
 
 
 def sina():
@@ -81,18 +83,17 @@ def yahoo():
 
 
 def yesterday_ashare():
-    days = sorted(os.path.basename(f)[:8] for f in glob.glob(os.path.join(L.ROOT, "000001", "*.csv")))
+    days = sorted(os.path.basename(f)[:8] for f in glob.glob(os.path.join(L.ROOT, "000001", "*.csv")))[-6:]
     if len(days) < 4:
         return None
-    d, ds = days[-1], days[-4:]
     industry = json.load(open(os.path.join(L.META, "industry_em.json")))
-    rows = []
+    closes = {}
     for p in glob.glob(os.path.join(L.ROOT, "[0-9]*")):
         code = os.path.basename(p)
         if code.startswith("92"):
             continue
         cl = {}
-        for dd in ds:
+        for dd in days:
             f = os.path.join(p, f"{dd}.csv")
             if os.path.exists(f):
                 try:
@@ -101,9 +102,17 @@ def yesterday_ashare():
                         cl[dd] = float(x["close"].iloc[-1])
                 except Exception:
                     pass
-        if len(cl) == 4:
-            rows.append((code, industry.get(code, {}).get("em1", "") or "其他", cl))
-    df = pd.DataFrame([(c, s, (cl[ds[-1]] / cl[ds[-2]] - 1) * 100, (cl[ds[-1]] / cl[ds[0]] - 1) * 100) for c, s, cl in rows], columns=["code", "sec", "r1", "r3"])
+        if len(cl) >= 3:
+            closes[code] = cl
+    px = pd.DataFrame(closes).T.reindex(columns=days)
+    px = px.loc[:, px.notna().mean() >= 0.8].dropna()   # 剔除不完整的日期
+    if px.shape[1] < 4:
+        return None
+    px = px.iloc[:, -4:]
+    ds = list(px.columns)
+    d = ds[-1]
+    df = pd.DataFrame({"code": px.index, "r1": (px[ds[-1]] / px[ds[-2]] - 1).values * 100, "r3": (px[ds[-1]] / px[ds[0]] - 1).values * 100})
+    df["sec"] = df["code"].map(lambda c: industry.get(c, {}).get("em1", "") or "其他")
     cnt = df.groupby("sec")["code"].count()
     df = df[df["sec"].isin(cnt[cnt >= 15].index)]
     g = df.groupby("sec").agg(r1=("r1", "mean"), r3=("r3", "mean"), up=("r1", lambda s: (s > 0).mean() * 100))
@@ -117,6 +126,67 @@ def yesterday_ashare():
     return {"day": d, "mean": df["r1"].mean(), "down_ratio": (df["r1"] < 0).mean() * 100, "n": len(df),
             "top": g.sort_values("r1", ascending=False).head(4), "bottom": g.sort_values("r1").head(4),
             "white": g.loc[[s for s in WHITELIST if s in g.index]], "avoid_n": avoid_n}
+
+
+def sector_watch(ndays=10):
+    """每个板块近 ndays 的等权日涨幅与上涨占比，连续走强/共振天数；给出白名单进出候选"""
+    days = sorted(os.path.basename(f)[:8] for f in glob.glob(os.path.join(L.ROOT, "000001", "*.csv")))[-(ndays + 1):]
+    if len(days) < 4:
+        return None
+    industry = json.load(open(os.path.join(L.META, "industry_em.json")))
+    closes = {}
+    for p in glob.glob(os.path.join(L.ROOT, "[0-9]*")):
+        code = os.path.basename(p)
+        if code.startswith("92"):
+            continue
+        cl = {}
+        for dd in days:
+            f = os.path.join(p, f"{dd}.csv")
+            if os.path.exists(f):
+                try:
+                    x = pd.read_csv(f, usecols=["close"])
+                    if len(x) >= 100:
+                        cl[dd] = float(x["close"].iloc[-1])
+                except Exception:
+                    pass
+        if len(cl) >= len(days) - 2:
+            closes[code] = cl
+    if not closes:
+        return None
+    px = pd.DataFrame(closes).T.reindex(columns=days)
+    cov = px.notna().mean()
+    px = px.loc[:, cov >= 0.8]           # 剔除只有零星股票的日期（盘中或测试写入的当天文件）
+    px = px.dropna(thresh=int(px.shape[1] * 0.9))
+    days = list(px.columns)
+    if len(days) < 4:
+        return None
+    ret = px.pct_change(axis=1).iloc[:, 1:] * 100
+    sec = pd.Series({c: industry.get(c, {}).get("em1", "") or "其他" for c in ret.index})
+    cnt = sec.value_counts()
+    rows = []
+    for s in cnt[cnt >= 15].index:
+        if s == "其他":
+            continue
+        r = ret[sec == s]
+        mean = r.mean(); up = (r > 0).mean() * 100
+        strong = [(mean.iloc[i] >= STRONG_RET and up.iloc[i] >= STRONG_UP) for i in range(len(mean))]
+        reson = [(mean.iloc[i] >= RESON_RET and up.iloc[i] >= RESON_UP) for i in range(len(mean))]
+        weak = [(mean.iloc[i] < 0) for i in range(len(mean))]
+        def streak(flags):
+            n = 0
+            for f in reversed(flags):
+                if f:
+                    n += 1
+                else:
+                    break
+            return n
+        rows.append({"sec": s, "n": int(cnt[s]), "r1": mean.iloc[-1], "up1": up.iloc[-1], "r3": r.iloc[:, -3:].sum(axis=1).mean(),
+                     "r10": r.sum(axis=1).mean(), "strong_streak": streak(strong), "reson_streak": streak(reson), "weak_streak": streak(weak),
+                     "strong_days10": sum(strong), "reson_days10": sum(reson), "in_wl": s in WHITELIST})
+    df = pd.DataFrame(rows)
+    add = df[(~df["in_wl"]) & (df["strong_streak"] >= 2)].sort_values("strong_streak", ascending=False)
+    drop = df[(df["in_wl"]) & (df["weak_streak"] >= 4)]
+    return {"df": df, "add": add, "drop": drop, "last_day": days[-1]}
 
 
 def todays_events(now):
@@ -169,6 +239,7 @@ def main():
     args = ap.parse_args()
     now = datetime.now()
     s, y, a = sina(), yahoo(), yesterday_ashare()
+    w = sector_watch()
     evs = todays_events(now)
     st, why, col = stance(s, y, a)
     if evs:
@@ -184,6 +255,15 @@ def main():
                   "  最强：" + "  ".join(f"{i} {r.r1:+.2f}%" for i, r in a["top"].iterrows()),
                   "  最弱：" + "  ".join(f"{i} {r.r1:+.2f}%" for i, r in a["bottom"].iterrows()),
                   "  白名单板块近3日：" + "  ".join(f"{i} {r.r3:+.2f}%（昨日 {r.r1:+.2f}%，{r.up:.0f}% 上涨）" for i, r in a["white"].iterrows())]
+    if w is not None:
+        top = w["df"].sort_values("strong_streak", ascending=False)
+        lines += ["", f"板块观察（到 {w['last_day']}）：连续走强天数 = 连续「涨>=1.5% 且 >=70% 上涨」的天数"]
+        lines += [f"  {r.sec:<8} 昨日 {r.r1:+.2f}%({r.up1:.0f}%上涨)  近3日 {r.r3:+.2f}%  近10日 {r.r10:+.2f}%  连续走强 {r.strong_streak} 天  10日内走强 {r.strong_days10} 天/共振 {r.reson_days10} 天{'  [白名单]' if r.in_wl else ''}"
+                  for r in top.head(8).itertuples()]
+        if len(w["add"]):
+            lines.append("  ▲ 候选加入白名单（白名单外、连续走强>=2天）：" + "、".join(f"{r.sec}({r.strong_streak}天)" for r in w["add"].itertuples()))
+        if len(w["drop"]):
+            lines.append("  ▼ 候选移出白名单（连续下跌>=4天）：" + "、".join(f"{r.sec}({r.weak_streak}天)" for r in w["drop"].itertuples()))
     if evs:
         lines += ["", "事件："] + [f"  {e}" for e in evs]
     body = "\n".join(lines)
@@ -202,6 +282,21 @@ def main():
         parts.append(L.h_section("白名单板块", "近 3 日 · 昨日 · 上涨占比"))
         parts += [f"<div style='padding:7px 0;border-bottom:1px solid {L.LINE};display:flex;justify-content:space-between'><span>{i}</span><span>{L.h_pct(r.r3)} <span style='color:{L.GRAY}'>· 昨日</span> {L.h_pct(r.r1)} <span style='color:{L.GRAY}'>· {r.up:.0f}% 上涨</span></span></div>"
                   for i, r in a["white"].iterrows()]
+    if w is not None:
+        top = w["df"].sort_values(["strong_streak", "r3"], ascending=False).head(8)
+        parts.append(L.h_section("板块观察", f"到 {w['last_day'][:4]}-{w['last_day'][4:6]}-{w['last_day'][6:]} · 走强 = 涨≥1.5% 且 ≥70% 上涨"))
+        for r in top.itertuples():
+            badge = f"<span style='margin-left:6px;padding:1px 6px;border-radius:3px;background:#f0f0ec;color:{L.INK};font-size:11px'>白名单</span>" if r.in_wl else ""
+            streak_html = f"<b style='color:{L.RED}'>连续走强 {r.strong_streak} 天</b>" if r.strong_streak >= 2 else f"<span style='color:{L.GRAY}'>连续走强 {r.strong_streak} 天</span>"
+            parts.append(f"<div style='padding:8px 0;border-bottom:1px solid {L.LINE}'><div style='display:flex;justify-content:space-between'><span><b>{r.sec}</b>{badge}</span><span>{streak_html}</span></div>"
+                         f"<div style='color:{L.GRAY};font-size:12px;margin-top:3px'>昨日 {L.h_pct(r.r1)}（{r.up1:.0f}% 上涨）· 近3日 {L.h_pct(r.r3)} · 近10日 {L.h_pct(r.r10)} · 10日内走强 {r.strong_days10} 天 / 共振 {r.reson_days10} 天</div></div>")
+        flags = []
+        if len(w["add"]):
+            flags.append(f"<div style='margin-top:8px;color:{L.RED}'>▲ 候选加入白名单：" + "、".join(f"{r.sec}（连续走强 {r.strong_streak} 天）" for r in w["add"].itertuples()) + "</div>")
+        if len(w["drop"]):
+            flags.append(f"<div style='margin-top:4px;color:{L.GREEN}'>▼ 候选移出白名单：" + "、".join(f"{r.sec}（连续下跌 {r.weak_streak} 天）" for r in w["drop"].itertuples()) + "</div>")
+        if flags:
+            parts.append("".join(flags) + f"<div style='color:{L.GRAY};font-size:12px;margin-top:4px'>改白名单：编辑 sectors.txt，一行一个板块名，扫描器下一轮生效。</div>")
     if evs:
         parts.append(L.h_section("事件", "") + "".join(f"<div style='padding:6px 0'>{e}</div>" for e in evs))
     html = L.h_wrap(f"早报 · {st}", [f"{now:%Y-%m-%d} {now:%H:%M}"], parts,
