@@ -161,3 +161,10 @@ python3 scan_brief.py --no-email
 ```
 
 定时任务 `~/Library/LaunchAgents/com.qyhdt.stock-brief.plist`。宏观因素只用来决定「今天做不做、做哪个方向」，不进个股信号（回测证明进了没有预测力）。
+
+### 电脑睡眠与邮件补发
+
+- 所有定时任务都依赖电脑醒着。合盖或长时间闲置 macOS 会睡眠，睡眠期间只有每 16 分钟一次的几秒钟短暂唤醒，launchd 任务跑不完整、网络也不可用。
+- `~/Library/LaunchAgents/com.qyhdt.stock-awake.plist`：工作日 08:20 启动 `caffeinate -i -s`，到 15:30 之间阻止闲置睡眠（插电时有效）。合盖仍会睡，交易时段请开盖或接外接显示器。
+- 定时唤醒需要管理员权限，手动执行一次即可长期生效：`sudo pmset repeat wakeorpoweron MTWRF 08:15:00`。
+- 发信失败的邮件会写入 `mins/_meta/mail_queue/`，每分钟的盘中扫描会自动补发，主题加「延迟发送」标记；超过 12 小时未发出的自动丢弃。
