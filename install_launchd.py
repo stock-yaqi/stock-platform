@@ -5,6 +5,9 @@
     python3 install_launchd.py            # 生成 ~/Library/LaunchAgents/com.qyhdt.stock-*.plist 并加载
     python3 install_launchd.py --uninstall
     python3 install_launchd.py --status
+    python3 install_launchd.py --scheduler-ssh   # 代码在外接卷（/Volumes/...）上的机器用这个：只装一个 KeepAlive 任务，
+                                                 # 通过 ssh localhost 启动 scheduler.py（sshd 起的进程有完整磁盘权限，launchd 直接起的没有）。
+                                                 # 需要本机对 localhost 的免密 key：~/.ssh/id_ed25519_local 已加入 authorized_keys。
 
 任务：
     stock-live-scan   每 60 秒 scan_live.py（脚本自判交易时段）
@@ -44,6 +47,31 @@ def sh(*args):
     return subprocess.run(args, capture_output=True, text=True)
 
 
+SCHED_LABEL = "com.qyhdt.stock-scheduler"
+
+
+def install_scheduler_ssh():
+    key = os.path.expanduser("~/.ssh/id_ed25519_local")
+    if not os.path.exists(key):
+        sh("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key, "-C", "stock-local")
+        with open(os.path.expanduser("~/.ssh/authorized_keys"), "a") as f:
+            f.write(open(key + ".pub").read())
+        os.chmod(os.path.expanduser("~/.ssh/authorized_keys"), 0o600)
+    os.makedirs(AGENTS, exist_ok=True)
+    os.makedirs(LOGS, exist_ok=True)
+    d = {"Label": SCHED_LABEL,
+         "ProgramArguments": ["/usr/bin/ssh", "-i", key, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "localhost",
+                              f"cd {HERE} && exec ./run.sh scheduler.py"],
+         "KeepAlive": True, "RunAtLoad": True, "ThrottleInterval": 30,
+         "StandardOutPath": os.path.join(LOGS, "scheduler_launchd.out"), "StandardErrorPath": os.path.join(LOGS, "scheduler_launchd.err")}
+    path = os.path.join(AGENTS, SCHED_LABEL + ".plist")
+    sh("launchctl", "bootout", f"gui/{UID}/{SCHED_LABEL}")
+    with open(path, "wb") as f:
+        plistlib.dump(d, f)
+    r = sh("launchctl", "bootstrap", f"gui/{UID}", path)
+    print(f"{'OK ' if r.returncode == 0 else 'ERR'} {SCHED_LABEL}  {r.stderr.strip()}")
+
+
 def install():
     os.makedirs(AGENTS, exist_ok=True)
     os.makedirs(LOGS, exist_ok=True)
@@ -64,7 +92,7 @@ def install():
 
 
 def uninstall():
-    for label in JOBS:
+    for label in list(JOBS) + [SCHED_LABEL]:
         sh("launchctl", "bootout", f"gui/{UID}/{label}")
         p = os.path.join(AGENTS, label + ".plist")
         if os.path.exists(p):
@@ -73,7 +101,7 @@ def uninstall():
 
 
 def status():
-    for label in JOBS:
+    for label in list(JOBS) + [SCHED_LABEL]:
         r = sh("launchctl", "print", f"gui/{UID}/{label}")
         if r.returncode != 0:
             print(f"--  {label}: 未加载")
@@ -86,11 +114,14 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--uninstall", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--scheduler-ssh", action="store_true")
     a = ap.parse_args()
     print(f"目录 {HERE}\nPython {PY}\n")
     if a.uninstall:
         uninstall()
     elif a.status:
         status()
+    elif a.scheduler_ssh:
+        install_scheduler_ssh()
     else:
         install()
