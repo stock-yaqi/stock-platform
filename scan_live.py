@@ -409,8 +409,9 @@ def sell_reminder(now, args, ov=None, force=False):
 
     lines = [f"{'最后提醒 ' if which == 2 else ''}昨日({data['date']})信号，{now:%H:%M} 实时：", f"处理：{headline}", f"外围：{ov_line}", ""]
     for r in rows:
-        lines.append(f"  {r['code']} {r['name']}  信号价 {r['price']}  现价 {r['now'] or '-'}  相对信号价 {'-' if r['prem'] is None else f'{r['prem']:+.2f}%'}  "
-                     f"早盘最高 {'-' if r['prem_high'] is None else f'{r['prem_high']:+.2f}%'}  → {r['act']}")
+        prem_s = "-" if r["prem"] is None else f"{r['prem']:+.2f}%"
+        premh_s = "-" if r["prem_high"] is None else f"{r['prem_high']:+.2f}%"
+        lines.append(f"  {r['code']} {r['name']}  信号价 {r['price']}  现价 {r['now'] or '-'}  相对信号价 {prem_s}  早盘最高 {premh_s}  → {r['act']}")
     parts = [f"<div style='margin-top:12px;padding:12px;border-left:4px solid {hcol};background:#f7f7f4'><div style='font-size:17px;font-weight:700;color:{hcol}'>{headline}</div>"
              f"<div style='color:{GRAY};font-size:12px;margin-top:4px'>外围 " + (" · ".join(f"{k} {h_pct(v)}" for k, v in ov.items()) or "数据缺失") + f" · {now:%H:%M} 实时价</div></div>",
              h_section("逐只处理", f"{len(rows)} 只")]

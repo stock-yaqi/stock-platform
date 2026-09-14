@@ -168,3 +168,9 @@ python3 scan_brief.py --no-email
 - `~/Library/LaunchAgents/com.qyhdt.stock-awake.plist`：工作日 08:20 启动 `caffeinate -i -s`，到 15:30 之间阻止闲置睡眠（插电时有效）。合盖仍会睡，交易时段请开盖或接外接显示器。
 - 定时唤醒需要管理员权限，手动执行一次即可长期生效：`sudo pmset repeat wakeorpoweron MTWRF 08:15:00`。
 - 发信失败的邮件会写入 `mins/_meta/mail_queue/`，每分钟的盘中扫描会自动补发，主题加「延迟发送」标记；超过 12 小时未发出的自动丢弃。
+
+### 部署到常开的 Mac Studio（/Volumes/NewVolume/stock-a）
+
+- 代码从笔记本 `git push studio main` 推过去（远端 `receive.denyCurrentBranch=updateInstead`），远端 GitHub 不稳定不依赖它。数据目录 `mins/` 用 rsync 同步一次，之后远端自己每天同步。
+- macOS 不允许 launchd 起的进程访问外接卷（`ls /Volumes/NewVolume/...` 报 Operation not permitted），但 SSH 会话起的进程有完整磁盘权限。所以远端不用 launchd，用 `scheduler.py` 常驻调度：`ssh sales@192.168.3.21 'cd /Volumes/NewVolume/stock-a && nohup /opt/homebrew/bin/python3.12 scheduler.py >/dev/null 2>&1 &'`。重启后需要再启动一次。
+- `install_launchd.py` 仍可用于代码放在用户目录内的机器。
