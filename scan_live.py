@@ -13,7 +13,7 @@
 
 数据源：腾讯批量行情（全市场涨幅，4 秒）+ 腾讯 1 分钟 K 线（候选股，逐只）；
         20 日均额 / 60 日高点来自本地 mins/ 分钟库，缓存在 mins/_meta/daily_cache.json。
-邮件：  读取同目录 .env 里的 SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ALERT_TO（多个收件人用逗号隔开）。
+邮件：  读取同目录 .env：主通道 SMTP_*（Gmail），备用通道 SMTP2_*（stock@substantia.ai），主通道失败自动切备用；ALERT_TO 多个收件人用逗号隔开。
 
 用法：
     python3 scan_live.py                 # 盘中由 launchd 每 1 分钟调用；非交易时段直接退出；文件锁防止重叠
@@ -83,13 +83,17 @@ def load_env():
     return {k.strip(): v.strip() for k, v in (l.split("=", 1) for l in open(p) if "=" in l and not l.startswith("#"))}
 
 
-def send_mail(subject, body, html=None):
-    env = load_env()
-    need = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "ALERT_TO"]
-    if any(k not in env for k in need):
-        log("未配置 .env 邮件参数，跳过发信")
-        return False
-    sender = env.get("SMTP_FROM") or env["SMTP_USER"]
+def _channels(env):
+    """发信通道：SMTP_*（主，Gmail）→ SMTP2_*（备，stock@substantia.ai）。配置齐全的才算"""
+    out = []
+    for pre, name in (("SMTP_", "主通道"), ("SMTP2_", "备用通道")):
+        h, p, u, pw = env.get(pre + "HOST"), env.get(pre + "PORT"), env.get(pre + "USER"), env.get(pre + "PASS")
+        if h and p and u and pw:
+            out.append({"name": f"{name} {h}", "host": h, "port": int(p), "user": u, "pass": pw, "from": env.get(pre + "FROM") or u})
+    return out
+
+
+def _build(subject, body, html, sender, recipients):
     if html:
         msg = MIMEMultipart("alternative")
         msg.attach(MIMEText(body, "plain", "utf-8"))
@@ -98,24 +102,40 @@ def send_mail(subject, body, html=None):
         msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
-    recipients = [x.strip() for x in env["ALERT_TO"].replace("；", ",").replace(";", ",").split(",") if x.strip()]
     msg["To"] = ", ".join(recipients)
-    port = int(env["SMTP_PORT"])
-    for attempt in range(3):
+    return msg
+
+
+def _send_now(subject, body, html=None, quiet=False):
+    """按通道顺序各试一次，第一个成功即返回 True"""
+    env = load_env()
+    chans = _channels(env)
+    if not chans or "ALERT_TO" not in env:
+        log("未配置 .env 邮件参数，跳过发信")
+        return False
+    recipients = [x.strip() for x in env["ALERT_TO"].replace("；", ",").replace(";", ",").split(",") if x.strip()]
+    for ch in chans:
         try:
-            cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
-            with cls(env["SMTP_HOST"], port, timeout=30) as s:
-                if port != 465:
+            cls = smtplib.SMTP_SSL if ch["port"] == 465 else smtplib.SMTP
+            with cls(ch["host"], ch["port"], timeout=20) as s:
+                if ch["port"] != 465:
                     s.ehlo()
                     s.starttls()
-                s.login(env["SMTP_USER"], env["SMTP_PASS"])
-                s.sendmail(sender, recipients, msg.as_string())
-            log(f"邮件已发送：{subject}")
+                s.login(ch["user"], ch["pass"])
+                s.sendmail(ch["from"], recipients, _build(subject, body, html, ch["from"], recipients).as_string())
+            log(f"邮件已发送（{ch['name']}）：{subject}")
             return True
         except Exception as e:
-            log(f"发信失败({attempt + 1}/3)：{e!r}")
-            time.sleep(3)
-    # 发不出去就进队列，之后每分钟的扫描会自动补发（电脑睡眠 / VPN 掉线时常见）
+            log(f"{ch['name']} 发信失败：{e!r}"[:200])
+    return False
+
+
+def send_mail(subject, body, html=None):
+    """两轮通道尝试；都失败则进队列，之后每分钟扫描自动补发"""
+    for attempt in range(2):
+        if _send_now(subject, body, html):
+            return True
+        time.sleep(3)
     try:
         qdir = os.path.join(META, "mail_queue")
         os.makedirs(qdir, exist_ok=True)
@@ -140,49 +160,16 @@ def flush_mail_queue(max_age_hours=12):
                 os.remove(f)
                 log(f"队列邮件过期丢弃：{m['subject']}")
                 continue
-            tag = f"（{m['created'][11:]} 生成，延迟发送）"
             html = m["html"]
             if html:
-                html = html.replace("</div>\n</div>", f"</div><div style='color:#7a7f85;font-size:12px;margin-top:8px'>本邮件 {m['created']} 生成，因电脑睡眠或网络中断延迟发送。</div>\n</div>", 1)
-            if _send_now(m["subject"] + tag, m["body"] + f"\n\n[本邮件 {m['created']} 生成，延迟发送]", html):
+                html = html.replace("</div>\n</div>", f"</div><div style='color:#7a7f85;font-size:12px;margin-top:8px'>本邮件 {m['created']} 生成，延迟发送。</div>\n</div>", 1)
+            if _send_now(m["subject"] + f"（{m['created'][11:]} 生成，延迟发送）", m["body"] + f"\n\n[本邮件 {m['created']} 生成，延迟发送]", html):
                 os.remove(f)
             else:
                 break  # 网络还没好，下一轮再试
         except Exception as e:
             log(f"补发队列失败：{e!r}")
             break
-
-
-def _send_now(subject, body, html=None):
-    env = load_env()
-    need = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "ALERT_TO"]
-    if any(k not in env for k in need):
-        return False
-    sender = env.get("SMTP_FROM") or env["SMTP_USER"]
-    if html:
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        msg.attach(MIMEText(html, "html", "utf-8"))
-    else:
-        msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = Header(subject, "utf-8")
-    msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
-    recipients = [x.strip() for x in env["ALERT_TO"].replace("；", ",").replace(";", ",").split(",") if x.strip()]
-    msg["To"] = ", ".join(recipients)
-    port = int(env["SMTP_PORT"])
-    try:
-        cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
-        with cls(env["SMTP_HOST"], port, timeout=30) as s:
-            if port != 465:
-                s.ehlo()
-                s.starttls()
-            s.login(env["SMTP_USER"], env["SMTP_PASS"])
-            s.sendmail(sender, recipients, msg.as_string())
-        log(f"补发成功：{subject}")
-        return True
-    except Exception as e:
-        log(f"补发失败：{e!r}")
-        return False
 
 
 # ---------------------------------------------------------------- HTML 邮件排版（手机优先，内联样式）
