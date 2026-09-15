@@ -10,14 +10,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 HERE = os.path.dirname(os.path.abspath(__file__)); OUT = os.path.join(HERE, "mins", "_meta", "gdrs.json")
 H = {"User-Agent": "Mozilla/5.0", "Referer": "https://emweb.securities.eastmoney.com/", "Connection": "close"}
-KEEP = ["END_DATE", "HOLDER_TOTAL_NUM", "TOTAL_NUM_RATIO", "AVG_MARKET_CAP", "AVG_HOLD_NUM", "HOLD_NOTICE_DATE", "CLOSE_PRICE", "INTERVAL_CHRATE"]
+DROP = {"SECUCODE", "SECURITY_CODE"}  # 其余字段全部保留：END_DATE, HOLDER_TOTAL_NUM, TOTAL_NUM_RATIO(户数环比%), AVG_FREE_SHARES, HOLD_FOCUS, PRICE, HOLD_RATIO_TOTAL(前十大占比) ...
 def fetch(code):
     pre = "SH" if code.startswith(("6", "9")) else "BJ" if code.startswith(("4", "8")) else "SZ"
     for i in range(3):
         try:
             j = requests.get(f"https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={pre}{code}", headers=H, proxies={"http": None, "https": None}, timeout=15).json()
             rows = j.get("gdrs") or []
-            return code, [{k: r.get(k) for k in KEEP} for r in rows]
+            return code, [{k: v for k, v in r.items() if k not in DROP} for r in rows]
         except Exception:
             time.sleep(1 + i)
     return code, None
