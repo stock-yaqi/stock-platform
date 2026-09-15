@@ -55,6 +55,7 @@ def price_stats(args):
     d = pd.DataFrame(rows, columns=["l", "c", "amt"])
     avg20 = d["amt"].iloc[-21:-1].mean()
     return {"code": code, "close": d["c"].iloc[-1], "dist_low": (d["c"].iloc[-1] / d["l"].min() - 1) * 100,
+            "new_low": bool(d["l"].iloc[-1] <= d["l"].iloc[:-1].min()),
             "r20": (d["c"].iloc[-1] / d["c"].iloc[-21] - 1) * 100 if len(d) > 21 else np.nan,
             "vr": d["amt"].iloc[-5:].mean() / avg20 if avg20 > 0 else np.nan, "avg20": avg20 / 1e8}
 
@@ -107,6 +108,8 @@ def main():
     df = df.merge(px, on="code", how="left")
     df = df[df["avg20"].fillna(0) >= args.min_amt]
     df["期后涨幅%"] = (df["close"] / df["期末价"] - 1) * 100
+    df["new_low"] = df["new_low"].fillna(False).astype(bool)
+    df["dist_low"] = df["dist_low"].fillna(99)
 
     # 口径（披露后一期可交易窗口的回测，见文件头）
     drop = df["环比%"] <= -args.min_drop                                        # ① 户数降 >= 10%
