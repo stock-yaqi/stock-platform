@@ -295,7 +295,8 @@ def sync_one(stock: dict, want_days: int, full: bool):
         # 通达信不可用：先腾讯（快，覆盖最新 1 天多），不够再新浪补齐旧日
         days = fetch_tencent(code, ex, want_days, stop) or {}
         if len(days) < want_days and not (stop and any(d in stop for d in days)):
-            older = fetch_sina(code, ex, want_days, stop | set(days)) or {}
+            # 新浪从最新往回取到 want_days 天或碰到本地已完整的日期；今天用腾讯的（快），其余日期用新浪的
+            older = fetch_sina(code, ex, want_days, stop) or {}
             days = {**older, **days}
     if not days and days is not None and days == {}:
         return code, 0
