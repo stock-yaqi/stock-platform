@@ -22,7 +22,7 @@ import glob
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -84,6 +84,7 @@ def main():
     ap.add_argument("--min-amt", type=float, default=1.0, help="20 日均成交额下限（亿）")
     ap.add_argument("--watch", nargs="*", default=[], help="额外关注的代码")
     ap.add_argument("--top", type=int, default=40)
+    ap.add_argument("--resend", action="store_true", help="当天已发过也再发一封，主题标「修正重发」")
     args = ap.parse_args()
 
     days = sorted(os.path.basename(f)[:8] for f in glob.glob(os.path.join(ROOT, "000001", "*.csv")))
@@ -139,8 +140,14 @@ def main():
                     "名单里的股票 5-10 天内不追，持有的考虑减仓。低位（20 日涨幅为负）放量不在名单里，那是吸筹，另当别论。")
     print(body)
     print(f"已保存：{path}")
+    marker = os.path.join(L.META, f"avoid_sent_{day}")
     if not args.no_email and len(hit):
-        L.send_mail(f"【回避名单】{day} 高位放量 {int((hit['级别'].str[0] <= '2').sum())} 只，共 {len(hit)} 只", body, html)
+        if os.path.exists(marker) and not args.resend:
+            print(f"{day} 的回避名单今天已发过，跳过发信（要重发加 --resend）")
+            return
+        tag = "（修正重发）" if os.path.exists(marker) else ""
+        if L.send_mail(f"【回避名单】{day} 高位放量 {int((hit['级别'].str[0] <= '2').sum())} 只，共 {len(hit)} 只{tag}", body, html):
+            open(marker, "w").write(datetime.now().strftime("%H:%M"))
 
 
 if __name__ == "__main__":
