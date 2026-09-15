@@ -229,6 +229,18 @@ def h_card(line1_left, line1_right, line2, line3="", badge=""):
             f'<div style="margin-top:4px;font-size:13px;line-height:1.5">{line2}</div>{l3}</div>')
 
 
+def stock_url(code):
+    """东方财富手机行情页（分时 / 日K / 五档），邮件客户端内置浏览器可直接打开"""
+    m = "1" if str(code).startswith(("6", "9")) else "0"
+    return f"https://wap.eastmoney.com/quote/stock/{m}.{code}.html"
+
+
+def h_name(name, code):
+    """卡片标题：名称为链接，后跟灰色代码"""
+    return (f"<a href='{stock_url(code)}' style='color:{INK};text-decoration:none;border-bottom:1px solid {LINE}'>{h_esc(name)}</a> "
+            f"<span style='color:{GRAY};font-weight:400;font-size:12px'>{code}</span>")
+
+
 def h_kv(*pairs):
     """关键数字：标签灰、数值黑，用两个空格隔开"""
     return "&nbsp;&nbsp;".join(f'<span style="color:{GRAY}">{k}</span> <b>{v}</b>' for k, v in pairs)
@@ -441,7 +453,7 @@ def sell_reminder(now, args, ov=None, force=False):
              f"<div style='color:{GRAY};font-size:12px;margin-top:4px'>外围 " + (" · ".join(f"{k} {h_pct(v)}" for k, v in ov.items()) or "数据缺失") + f" · {now:%H:%M} 实时价</div></div>",
              h_section("逐只处理", f"{len(rows)} 只")]
     for r in rows:
-        parts.append(h_card(f"{r['name']} <span style='color:{GRAY};font-weight:400;font-size:12px'>{r['code']}</span>",
+        parts.append(h_card(h_name(r['name'], r['code']),
                             f"<span style='color:{r['col']};font-weight:700'>{r['act']}</span>",
                             h_kv(("信号价", f"{r['price']:g}"), ("现价", f"{r['now']:g}" if r['now'] else "-"), ("相对信号价", h_pct(r['prem']) if r['prem'] is not None else "-")),
                             h_kv(("早盘最高", h_pct(r['prem_high']) if r['prem_high'] is not None else "-"), ("今日", h_pct(r['pct']) if r['pct'] is not None else "-"), ("板块", r["sector"]))))
@@ -660,7 +672,7 @@ def scan(args):
         parts.append(h_section(f"{sec} {h_pct(r['mean'])}", f"{r['up']:.0f}% 上涨 · {int(r['n'])} 只"))
         for x in grp.itertuples():
             parts.append(h_card(
-                f"{x.name} <span style='color:{GRAY};font-weight:400;font-size:12px'>{x.code}</span>", h_pct(x.pct),
+                h_name(x.name, x.code), h_pct(x.pct),
                 h_kv(("突破", f"{x.breakout_time} @ {x.breakout_price:g}"), ("分钟量", f"{x.spike_x} 倍"), ("现价", f"{x.price:g}")),
                 h_kv(("首次突破", x.first_breakout), ("20日均额", f"{x.avg20_yi} 亿"), ("距60日高", f"{x.dd60}%")) +
                 ("" if x.leader else f" <span style='color:{GRAY}'>非前期龙头，历史偏弱</span>"),
@@ -668,7 +680,7 @@ def scan(args):
     for sec, grp in pd.DataFrame(follow).groupby("sector") if follow else []:
         parts.append(h_section(f"联动候选 · {sec}", f"板块今日已 {grp.iloc[0]['n_breakouts']} 只突破 · 高点 1% 以内、尚未突破"))
         for x in grp.itertuples():
-            parts.append(h_card(f"{x.name} <span style='color:{GRAY};font-weight:400;font-size:12px'>{x.code}</span>", h_pct(x.pct),
+            parts.append(h_card(h_name(x.name, x.code), h_pct(x.pct),
                                 h_kv(("现价", f"{x.price:g}"), ("距日内高", f"{x.dist_high}%"), ("20日均额", f"{x.avg20_yi} 亿")),
                                 h_kv(("距60日高", f"{x.dd60}%")), "前期龙头" if x.leader else ""))
     ov_warn = " · <span style='color:#b8742a'>隔夜纳指跌超 1.5%，早盘溢价可能偏弱</span>" if ov.get("纳指", 0) <= -1.5 else ""
@@ -719,7 +731,7 @@ def main():
     if args.test_email:
         html = h_wrap("测试 · 板块共振信号", ["邮件通道正常，这是 HTML 排版样例"],
                       [h_section(f"电子设备 {h_pct(3.65)}", "91% 上涨 · 561 只"),
-                       h_card(f"德明利 <span style='color:{GRAY};font-weight:400;font-size:12px'>001309</span>", h_pct(7.19),
+                       h_card(h_name("德明利", "001309"), h_pct(7.19),
                               h_kv(("突破", "10:46 @ 434.6"), ("分钟量", "11.2 倍"), ("现价", "435.4")),
                               h_kv(("首次突破", "10:44"), ("20日均额", "99.0 亿"), ("距60日高", "-56%")), "前期龙头")],
                       "卖出规则：次日 10:00 前离场，早盘冲高即走。")

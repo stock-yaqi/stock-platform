@@ -142,7 +142,7 @@ def pre_scan(ev_list, args):
         for r in df.head(args.top).itertuples():
             tags = " ".join(f"<span style='padding:1px 5px;border-radius:3px;background:#f0f0ec;color:{L.INK};font-size:11px'>{t}</span>" for t in r.tags.split())
             parts.append(L.h_card(
-                f"{r.name} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{r.code}</span>", f"<b>{r.score}</b><span style='color:{L.GRAY};font-size:12px'>/5</span>",
+                L.h_name(r.name, r.code), f"<b>{r.score}</b><span style='color:{L.GRAY};font-size:12px'>/5</span>",
                 L.h_kv(("现价", f"{r.price:g}"), ("今日", L.h_pct(r.pct)), ("距60日高", f"{r.dd60:+.0f}%"), ("DIF", f"{r.dif_pct:+.2f}%")),
                 L.h_kv(("低点", f"{r.dip:+.1f}%"), ("反弹", f"{r.rebound:+.1f}%"), ("20日均额", f"{r.avg20:.1f}亿"), ("量比", f"{r.amt_ratio:.2f}")) + "<br>" + tags))
         df.to_csv(os.path.join(HERE, f"事件埋伏_{ev['date']}_{ev['ticker']}.csv"), index=False, encoding="utf-8-sig")

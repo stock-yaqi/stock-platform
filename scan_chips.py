@@ -128,11 +128,11 @@ def main():
     body = "\n".join(lines)
     parts = [L.h_section(f"筹码集中 · {pool_name}", f"候选 {len(cand)} 只 · 4 分 {int((cand['得分'] == 4).sum())} 只")]
     for r in out.head(args.top).itertuples():
-        parts.append(L.h_card(f"{r.名称} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{r.代码}</span>", f"<b>{r.得分}</b><span style='color:{L.GRAY};font-size:12px'>/4</span>",
+        parts.append(L.h_card(L.h_name(r.名称, r.代码), f"<b>{r.得分}</b><span style='color:{L.GRAY};font-size:12px'>/4</span>",
                               L.h_kv(("户数环比", L.h_pct(-r._6) if False else f"<span style='color:{L.GREEN if r._6 < 0 else L.RED};font-weight:600'>{r._6:+.1f}%</span>"), ("上期", f"{r._7:+.1f}%"), ("前十大", f"{r._8}%（{r.前十大变化:+.1f}）"), ("期末", r.期末)),
                               L.h_kv(("收盘", f"{r.收盘:g}"), ("距40日低", f"{r._12:+.1f}%"), ("20日", L.h_pct(r._13, 1)), ("量比", f"{r._14:.2f}"))))
     if len(avoid):
-        parts.append(L.h_section("户数大增 · 回避", f"{len(avoid)} 只") + "<div style='padding:8px 0;line-height:1.8'>" + "、".join(f"{r.name} <span style='color:{L.RED}'>{r.环比:+.0f}%</span>" for r in avoid.head(20).rename(columns={'环比%': '环比'}).itertuples()) + "</div>")
+        parts.append(L.h_section("户数大增 · 回避", f"{len(avoid)} 只") + "<div style='padding:8px 0;line-height:1.8'>" + "、".join(f"<a href='{L.stock_url(r.code)}' style='color:{L.INK}'>{r.name}</a> <span style='color:{L.RED}'>{r.环比:+.0f}%</span>" for r in avoid.head(20).rename(columns={'环比%': '环比'}).itertuples()) + "</div>")
     html = L.h_wrap(f"筹码集中 · {day[:4]}-{day[4:6]}-{day[6:]}", [f"{pool_name} · 样本 {len(df)} 只 · 股东户数为东财 F10 最新披露"], parts,
                     "得分 = 最新一期户数降≥10% + 连续两期降≥5% + 前十大占比上升 + 低位缩量。回测：户数降≥15% 下一期超额 +2.8%、披露后再下一期 +1.5%；户数增≥20% 下一期 -2.5%。季度数据滞后 1-2 个月，是中期筹码线索，不是短线信号。")
     # 本地 HTML（自带数据、可排序筛选），随邮件作为附件发出

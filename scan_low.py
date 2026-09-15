@@ -142,7 +142,7 @@ def main():
     parts = [L.h_section(f"低位候选 · {pool_name}", f"低位基础 {len(cand)} 只 · 1 级 {len(lv1)} 只")]
     for r in show.itertuples():
         badge = "触发" if r.触发 else ""
-        parts.append(L.h_card(f"{r.名称} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{r.代码}</span>", f"<span style='font-size:12px;color:{L.GRAY}'>{r.级别}</span>",
+        parts.append(L.h_card(L.h_name(r.名称, r.代码), f"<span style='font-size:12px;color:{L.GRAY}'>{r.级别}</span>",
                               L.h_kv(("收盘", f"{r.收盘:g}"), ("今日", L.h_pct(r._6)), ("20日", L.h_pct(r._7, 1)), ("距40日低", f"{r._8:+.1f}%")),
                               L.h_kv(("量比", f"{r._10:.2f}"), ("5日均换手", f"{r._11:.1f}%"), ("20日均额", f"{r._13:.1f}亿"), ("距40日高", f"{r._9:+.1f}%")), badge))
     html = L.h_wrap(f"低位反转候选 · {day[:4]}-{day[4:6]}-{day[6:]}", [f"{pool_name} · 样本 {len(df)} 只"], parts,

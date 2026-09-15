@@ -84,12 +84,12 @@ function render(){
  let rows=cand.filter(r=>active.has(String(r.s))&&(!ind||r.i===ind)&&(!q||r.c.includes(q)||r.n.toLowerCase().includes(q)));
  rows.sort((a,b)=>{let x=a[sortK],y=b[sortK];if(typeof x==='boolean'){x=+x;y=+y;}if(x==null)return 1;if(y==null)return -1;if(typeof x==='string')return x.localeCompare(y,'zh')*dir;return (x-y)*dir;});
  document.getElementById('cnt').textContent=rows.length+' 只';
- document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr><td><span class="score s${r.s}">${r.s}</span></td><td>${r.c}</td><td><b>${r.n}</b></td><td>${r.i||''}</td>
+ document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr><td><span class="score s${r.s}">${r.s}</span></td><td>${r.c}</td><td><a href="https://wap.eastmoney.com/quote/stock/${r.c.startsWith('6')||r.c.startsWith('9')?'1':'0'}.${r.c}.html" target="_blank" style="color:var(--ink);font-weight:700">${r.n}</a></td><td>${r.i||''}</td>
  <td style="text-align:center">${tick(r.s1)}</td><td style="text-align:center">${tick(r.s2)}</td><td style="text-align:center">${tick(r.s3)}</td><td style="text-align:center">${tick(r.s4)}</td>
  <td>${pct(r.g)}</td><td>${pct(r.gp)}</td><td>${r.h.toLocaleString()}</td><td>${r.t==null?'—':r.t.toFixed(1)}</td><td>${pct(r.td)}</td>
  <td>${r.p==null?'—':r.p}</td><td>${pct(r.dl)}</td><td>${pct(r.r20)}</td><td>${r.vr==null?'—':r.vr.toFixed(2)}</td><td>${r.a==null?'—':r.a.toFixed(1)}</td><td>${r.f||''}</td></tr>`).join('');
 }
-document.querySelector('#ta tbody').innerHTML=avoid.slice().sort((a,b)=>b.g-a.g).slice(0,60).map(r=>`<tr><td>${r.c}</td><td><b>${r.n}</b></td><td>${r.i||''}</td><td>${pct(r.g)}</td><td>${pct(r.gp)}</td><td>${r.h.toLocaleString()}</td><td style="text-align:left">${r.d}</td></tr>`).join('');
+document.querySelector('#ta tbody').innerHTML=avoid.slice().sort((a,b)=>b.g-a.g).slice(0,60).map(r=>`<tr><td>${r.c}</td><td><a href="https://wap.eastmoney.com/quote/stock/${r.c.startsWith('6')||r.c.startsWith('9')?'1':'0'}.${r.c}.html" target="_blank" style="color:var(--ink);font-weight:700">${r.n}</a></td><td>${r.i||''}</td><td>${pct(r.g)}</td><td>${pct(r.gp)}</td><td>${r.h.toLocaleString()}</td><td style="text-align:left">${r.d}</td></tr>`).join('');
 render();
 </script>'''
 

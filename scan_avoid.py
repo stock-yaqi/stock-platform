@@ -126,7 +126,7 @@ def main():
         n = args.top if lvl.startswith(("1", "2")) else args.top // 2
         parts.append(L.h_section(lvl, f"{len(g)} 只 · {desc.get(lvl[0], '')}"))
         for r in g.head(n).itertuples():
-            parts.append(L.h_card(f"{r.名称} <span style='color:{L.GRAY};font-weight:400;font-size:12px'>{r.代码}</span>", L.h_pct(r._5),
+            parts.append(L.h_card(L.h_name(r.名称, r.代码), L.h_pct(r._5),
                                   L.h_kv(("成交额", f"{r.成交额倍数:.1f} 倍"), ("上影", f"{r._7:.1f}%"), ("20日涨幅", f"{r._8:+.0f}%")),
                                   L.h_kv(("收盘", f"{r.收盘:g}"), ("成交额", f"{r.成交额亿:.1f} 亿"))))
         if len(g) > n:
@@ -134,7 +134,7 @@ def main():
     if watch:
         w = out[out["代码"].isin(watch)]
         parts.insert(0, L.h_section("自选 / 持仓命中", f"{len(w)} 只") + ("".join(
-            f"<div style='padding:8px 0;border-bottom:1px solid {L.LINE}'><b>{r.名称}</b> <span style='color:{L.GRAY};font-size:12px'>{r.代码}</span> · {r.级别}</div>" for r in w.itertuples())
+            f"<div style='padding:8px 0;border-bottom:1px solid {L.LINE}'>{L.h_name(r.名称, r.代码)} · {r.级别}</div>" for r in w.itertuples())
             if len(w) else f"<div style='padding:8px 0;color:{L.GRAY}'>无</div>"))
     html = L.h_wrap(f"回避名单 · {day[:4]}-{day[4:6]}-{day[6:]}", [f"活跃股 {len(df)} 只，命中 {len(hit)} 只。放量但价格没跟上，之后 5-10 天大概率跑输大盘"], parts,
                     "名单里的股票 5-10 天内不追，持有的考虑减仓。低位（20 日涨幅为负）放量不在名单里，那是吸筹，另当别论。")
