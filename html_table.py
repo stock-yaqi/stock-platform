@@ -22,7 +22,7 @@ input[type=search],select{padding:6px 10px;border:1px solid var(--line);backgrou
 .tw{overflow-x:auto;background:var(--surface);border:1px solid var(--line)}
 table.data{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;white-space:nowrap}
 table.data th,table.data td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right}
-table.data th:nth-child(-n+4),table.data td:nth-child(-n+4){text-align:left}
+table.data th:nth-child(-n+6),table.data td:nth-child(-n+6){text-align:left}
 table.data th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-weight:500;font-size:12px;cursor:pointer;user-select:none;letter-spacing:.04em}
 table.data th.on{color:var(--ink)}table.data tr:hover td{background:var(--hover)}
 .score{display:inline-block;min-width:22px;text-align:center;border-radius:3px;padding:1px 6px;font-weight:700;color:#fff}
@@ -38,13 +38,13 @@ h2{font-size:17px;margin:32px 0 8px;font-family:"Noto Serif SC",serif}
 
 <div class="rules"><table>
 <tr><th style="width:56px">分项</th><th style="width:260px">条件</th><th>依据（东财 F10 户数 2024-03 至 2026-09，5211 只，相对全市场同期超额）</th></tr>
-<tr><td><b>①</b></td><td>最新一期股东户数环比下降 ≥ 10%</td><td>户数降 ≥10%：下一期 <b>+2.04%</b>，披露后再下一期 +1.14%（93 期）；降 ≥15%：+2.82% / +1.53%</td></tr>
-<tr><td><b>②</b></td><td>连续两期户数下降 ≥ 5%</td><td>下一期 <b>+1.71%</b>，16 个期数里 11 个为正；说明不是一次性的减少</td></tr>
-<tr><td><b>③</b></td><td>前十大流通股东持股占比比上期上升</td><td>户数降 ≥5% 且前十大上升：下一期 <b>+2.22%</b>（8 期里 7 期为正）；大股东和机构在增持</td></tr>
-<tr><td><b>④</b></td><td>低位缩量：距 40 日最低 ≤10%、20 日涨幅为负、5 日均成交额 &lt; 1.2 倍 20 日均额</td><td>价格还没走、量还没起，筹码集中在低位才有意义；低位缩量在分钟数据回测里 20 日超额 +4.2%</td></tr>
-<tr><td><b>回避</b></td><td>最新一期户数环比上升 ≥ 20%</td><td>散户涌入：下一期 <b>-2.50%</b>，18 期里只有 8 期为正；再下一期 -0.60%</td></tr>
+<tr><td><b>①</b></td><td>最新一期股东户数环比下降 ≥ 10%</td><td>入选门槛。披露后一期（可交易窗口）超额 <b>+1.45%</b>，23 期里 12 期为正；降 ≥15% 时 +1.84%</td></tr>
+<tr><td><b>②</b></td><td>无涌入退潮：前 6 期没有过 ≥20% 的户数涌入，且当前户数 ≤ 前期最低的 1.5 倍</td><td>有涌入史的下降是散户割肉退潮，披露后期均超额中位 <b>-1.0%</b>；无涌入的 +1.89%，21 期里 14 期为正。不满足的标为「退潮」不列</td></tr>
+<tr><td><b>③</b></td><td>前十大流通股东占比比上期 +≥1 个百分点</td><td>+≥1：披露后 <b>+2.42%</b>（7 期里 5 期）；+0~1 只是噪音（+0.22%）。①②③都满足 = 1 级，+2.53%、9 期里 6 期为正</td></tr>
+<tr><td><b>④</b></td><td>时机：今天不是 40 日新低，且距 40 日最低 ≤10%</td><td>分钟数据回测：创新低当天买入 10 日 -2.6%，不新低的低位 +2.7%。标「当日新低暂不」的等止跌；「已离开低位」的已经涨过</td></tr>
+<tr><td><b>回避</b></td><td>最新一期户数环比上升 ≥ 20%</td><td>散户涌入：披露后 <b>-0.46%</b>，21 期里 8 期为正；同期（不可交易）-2.5%</td></tr>
 </table></div>
-<p class="note">怎么用：先看 4 分和 3 分，再按行业和成交额挑；户数是季度（部分公司月度）数据，滞后 1 到 2 个月，10 月底三季报后会刷新，属于中期筹码线索，不是买卖时点。表头可点击排序，"入选项"四列 ✓ 表示满足该分项。</p>
+<p class="note">怎么用：级别由 ①②③ 决定（1 级最强），④ 是时机；退潮和回避不在候选表里。这些优势平均只有 1.5 到 2.5 个百分点、逐期波动大，要分散 8 到 10 只。户数是季度（部分公司月度）数据，滞后 1 到 2 个月，10 月底三季报后刷新。"期内"是户数变化那个季度的涨幅，"期后至今"是期末到今天的涨幅。表头可点击排序。</p>
 
 <div class="bar">
 <span style="color:var(--muted);font-size:12px">得分</span>
@@ -58,7 +58,7 @@ h2{font-size:17px;margin:32px 0 8px;font-family:"Noto Serif SC",serif}
 </div>
 <div class="tw"><table class="data" id="t"><thead><tr>
 <th data-k="s" class="on">得分</th><th data-k="c">代码</th><th data-k="n">名称</th><th data-k="i">行业</th>
-<th data-k="s1">①降10%</th><th data-k="s2">②连降</th><th data-k="s3">③前十大↑</th><th data-k="s4">④低位缩量</th>
+<th data-k="lv">级别</th><th data-k="mk">标记</th><th data-k="s1">①降10%</th><th data-k="s2">②无退潮</th><th data-k="s3">③前十大+1</th><th data-k="s4">④时机</th><th data-k="ri">期内</th><th data-k="ra">期后至今</th>
 <th data-k="g">户数环比</th><th data-k="gp">上期环比</th><th data-k="h">户数</th><th data-k="t">前十大%</th><th data-k="td">前十大变化</th>
 <th data-k="p">收盘</th><th data-k="dl">距40日低</th><th data-k="r20">20日涨幅</th><th data-k="vr">量比</th><th data-k="a">20日均额亿</th><th data-k="f">集中度</th>
 </tr></thead><tbody></tbody></table></div>
@@ -84,8 +84,8 @@ function render(){
  let rows=cand.filter(r=>active.has(String(r.s))&&(!ind||r.i===ind)&&(!q||r.c.includes(q)||r.n.toLowerCase().includes(q)));
  rows.sort((a,b)=>{let x=a[sortK],y=b[sortK];if(typeof x==='boolean'){x=+x;y=+y;}if(x==null)return 1;if(y==null)return -1;if(typeof x==='string')return x.localeCompare(y,'zh')*dir;return (x-y)*dir;});
  document.getElementById('cnt').textContent=rows.length+' 只';
- document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr><td><span class="score s${r.s}">${r.s}</span></td><td>${r.c}</td><td><a href="https://wap.eastmoney.com/quote/stock/${r.c.startsWith('6')||r.c.startsWith('9')?'1':'0'}.${r.c}.html" target="_blank" style="color:var(--ink);font-weight:700">${r.n}</a></td><td>${r.i||''}</td>
- <td style="text-align:center">${tick(r.s1)}</td><td style="text-align:center">${tick(r.s2)}</td><td style="text-align:center">${tick(r.s3)}</td><td style="text-align:center">${tick(r.s4)}</td>
+ document.querySelector('#t tbody').innerHTML=rows.map(r=>`<tr><td><span class="score s${r.s}">${r.s}</span></td><td>${r.c}</td><td><a href="https://wap.eastmoney.com/quote/stock/${r.c.startsWith('6')||r.c.startsWith('9')?'1':'0'}.${r.c}.html" target="_blank" style="color:var(--ink);font-weight:700">${r.n}</a></td><td>${r.i||''}</td><td style="text-align:left;white-space:nowrap">${r.lv||''}</td><td style="text-align:left;color:var(--muted)">${r.mk||''}</td>
+ <td style="text-align:center">${tick(r.s1)}</td><td style="text-align:center">${tick(r.s2)}</td><td style="text-align:center">${tick(r.s3)}</td><td style="text-align:center">${tick(r.s4)}</td><td>${pct(r.ri,0)}</td><td>${pct(r.ra,0)}</td>
  <td>${pct(r.g)}</td><td>${pct(r.gp)}</td><td>${r.h.toLocaleString()}</td><td>${r.t==null?'—':r.t.toFixed(1)}</td><td>${pct(r.td)}</td>
  <td>${r.p==null?'—':r.p}</td><td>${pct(r.dl)}</td><td>${pct(r.r20)}</td><td>${r.vr==null?'—':r.vr.toFixed(2)}</td><td>${r.a==null?'—':r.a.toFixed(1)}</td><td>${r.f||''}</td></tr>`).join('');
 }
