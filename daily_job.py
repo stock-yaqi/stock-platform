@@ -4,6 +4,8 @@ import os, subprocess, sys, datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 steps = [["mins_sync.py"], ["scan_live.py", "--build-cache"], ["scan_avoid.py"], ["scan_low.py"]]
+if datetime.date.today().weekday() == 0:  # 周一：更新股东户数并跑筹码集中筛选（季度/月度数据，每周一次够了）
+    steps += [["fetch_gdrs.py"], ["scan_chips.py"]]
 for st in steps:
     print(f"{datetime.datetime.now():%H:%M:%S} >>> {' '.join(st)}", flush=True)
     r = subprocess.run([PY] + st, cwd=HERE)
