@@ -33,6 +33,7 @@ import pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import scan_live as L  # noqa: E402
+import html_table  # noqa: E402
 
 ROOT = L.ROOT
 
@@ -134,14 +135,30 @@ def main():
         parts.append(L.h_section("户数大增 · 回避", f"{len(avoid)} 只") + "<div style='padding:8px 0;line-height:1.8'>" + "、".join(f"{r.name} <span style='color:{L.RED}'>{r.环比:+.0f}%</span>" for r in avoid.head(20).rename(columns={'环比%': '环比'}).itertuples()) + "</div>")
     html = L.h_wrap(f"筹码集中 · {day[:4]}-{day[4:6]}-{day[6:]}", [f"{pool_name} · 样本 {len(df)} 只 · 股东户数为东财 F10 最新披露"], parts,
                     "得分 = 最新一期户数降≥10% + 连续两期降≥5% + 前十大占比上升 + 低位缩量。回测：户数降≥15% 下一期超额 +2.8%、披露后再下一期 +1.5%；户数增≥20% 下一期 -2.5%。季度数据滞后 1-2 个月，是中期筹码线索，不是短线信号。")
+    # 本地 HTML（自带数据、可排序筛选），随邮件作为附件发出
+    industry = json.load(open(os.path.join(L.META, "industry_em.json")))
+    def fnum(v):
+        try:
+            return None if v is None or (isinstance(v, float) and np.isnan(v)) else round(float(v), 2)
+        except Exception:
+            return None
+    cand_rows = [{"s": int(r["得分"]), "c": r["代码"], "n": r["名称"], "i": industry.get(r["代码"], {}).get("em1", ""), "d": r["期末"], "h": int(r["户数"]),
+                  "g": fnum(r["环比%"]), "gp": fnum(r["上期环比%"]), "t": fnum(r["前十大%"]), "td": fnum(r["前十大变化"]), "f": r["集中度"] if isinstance(r["集中度"], str) else "",
+                  "p": fnum(r["收盘"]), "dl": fnum(r["距40日低%"]), "r20": fnum(r["20日涨幅%"]), "vr": fnum(r["5日均额/20日均额"]), "a": fnum(r["20日均额亿"]),
+                  "s1": bool(r["环比%"] <= -args.min_drop), "s2": bool(r["环比%"] <= -5 and (r["上期环比%"] or 0) <= -5), "s3": bool((r["前十大变化"] or 0) > 0),
+                  "s4": bool((r["距40日低%"] or 99) <= 10 and (r["20日涨幅%"] or 0) < 0 and (r["5日均额/20日均额"] or 9) < 1.2)} for r in out.to_dict("records")]
+    avoid_rows = [{"c": r["code"], "n": r["name"], "i": industry.get(r["code"], {}).get("em1", ""), "d": r["期末"], "h": int(r["户数"]), "g": fnum(r["环比%"]), "gp": fnum(r["上期环比%"])} for r in avoid.to_dict("records")]
+    period = out["期末"].max() if len(out) else ""
+    html_path = os.path.join(HERE, f"筹码集中{tag}_{day}.html")
+    open(html_path, "w", encoding="utf-8").write(html_table.render(cand_rows, avoid_rows, {"day": f"{day[:4]}-{day[4:6]}-{day[6:]}", "period": period, "pool": pool_name}))
     print(body)
-    print("已保存：", path)
+    print("已保存：", path, "和", html_path)
     marker = os.path.join(L.META, f"chips_sent_{day}{tag}")
     if not args.no_email and len(cand):
         if os.path.exists(marker) and not args.resend:
             print("今天已发过，跳过发信（--resend 重发）")
             return
-        if L.send_mail(f"【筹码集中】{day} {pool_name} 候选 {len(cand)} 只，4 分 {int((cand['得分'] == 4).sum())} 只；户数大增回避 {len(avoid)} 只" + ("（修正重发）" if os.path.exists(marker) else ""), body, html):
+        if L.send_mail(f"【筹码集中】{day} {pool_name} 候选 {len(cand)} 只，4 分 {int((cand['得分'] == 4).sum())} 只；户数大增回避 {len(avoid)} 只（附可筛选表格）" + ("（修正重发）" if os.path.exists(marker) else ""), body, html, attachments=[html_path]):
             open(marker, "w").write(datetime.now().strftime("%H:%M"))
 
 

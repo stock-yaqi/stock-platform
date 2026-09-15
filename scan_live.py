@@ -34,6 +34,8 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, date, timedelta
 from email.header import Header
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
@@ -93,20 +95,31 @@ def _channels(env):
     return out
 
 
-def _build(subject, body, html, sender, recipients):
+def _build(subject, body, html, sender, recipients, attachments=None):
     if html:
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        msg.attach(MIMEText(html, "html", "utf-8"))
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body, "plain", "utf-8"))
+        alt.attach(MIMEText(html, "html", "utf-8"))
     else:
-        msg = MIMEText(body, "plain", "utf-8")
+        alt = MIMEText(body, "plain", "utf-8")
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        msg.attach(alt)
+        for path in attachments:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(open(path, "rb").read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=("utf-8", "", os.path.basename(path)))
+            msg.attach(part)
+    else:
+        msg = alt
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = formataddr((str(Header("板块信号", "utf-8")), sender))
     msg["To"] = ", ".join(recipients)
     return msg
 
 
-def _send_now(subject, body, html=None, quiet=False):
+def _send_now(subject, body, html=None, quiet=False, attachments=None):
     """按通道顺序各试一次，第一个成功即返回 True"""
     env = load_env()
     chans = _channels(env)
@@ -122,7 +135,7 @@ def _send_now(subject, body, html=None, quiet=False):
                     s.ehlo()
                     s.starttls()
                 s.login(ch["user"], ch["pass"])
-                s.sendmail(ch["from"], recipients, _build(subject, body, html, ch["from"], recipients).as_string())
+                s.sendmail(ch["from"], recipients, _build(subject, body, html, ch["from"], recipients, attachments).as_string())
             log(f"邮件已发送（{ch['name']}）：{subject}")
             return True
         except Exception as e:
@@ -130,10 +143,10 @@ def _send_now(subject, body, html=None, quiet=False):
     return False
 
 
-def send_mail(subject, body, html=None):
-    """两轮通道尝试；都失败则进队列，之后每分钟扫描自动补发"""
+def send_mail(subject, body, html=None, attachments=None):
+    """两轮通道尝试；都失败则进队列，之后每分钟扫描自动补发（附件不进队列）"""
     for attempt in range(2):
-        if _send_now(subject, body, html):
+        if _send_now(subject, body, html, attachments=attachments):
             return True
         time.sleep(3)
     try:
