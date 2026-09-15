@@ -3,7 +3,7 @@
 import os, subprocess, sys, datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
-steps = [["mins_sync.py"], ["scan_live.py", "--build-cache"], ["scan_avoid.py"]]
+steps = [["mins_sync.py"], ["scan_live.py", "--build-cache"], ["scan_avoid.py"], ["scan_low.py"]]
 for st in steps:
     print(f"{datetime.datetime.now():%H:%M:%S} >>> {' '.join(st)}", flush=True)
     r = subprocess.run([PY] + st, cwd=HERE)
