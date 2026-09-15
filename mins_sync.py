@@ -207,6 +207,8 @@ def fetch_tencent(code: str, ex: str, want_days: int, stop_dates: set):
                 if hm == "09:30":
                     continue  # 腾讯多一根集合竞价 09:30，统一为通达信口径 09:31 起 240 根
                 o, c, h, l, v = float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])
+                if code.startswith("68"):
+                    v = v / 100.0  # 腾讯分钟线：科创板成交量单位是股，其余板块是手
                 # 腾讯分钟线不给成交额，用 收盘价 × 成交量 近似（单位元；v 为手）
                 days[d].append((hm, o, h, l, c, v, round(c * v * 100)))
             if not days:
