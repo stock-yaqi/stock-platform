@@ -475,6 +475,11 @@ def scan(args):
             return
         if os.path.exists(marker) and not args.now:
             m = json.load(open(marker))
+            # 回差：停手后要日韩都回到（阈值-0.3）以内才恢复，避免在阈值边缘来回切换
+            still = [k for k in ("日经", "韩国") if ov.get(k, 0) <= -(args.max_overseas_drop - 0.3)]
+            if not m.get("resumed") and still:
+                log(f"外围仍偏弱（{ov_line}），{'/'.join(still)} 未回到 -{args.max_overseas_drop - 0.3:.1f}% 以内，维持停手")
+                return
             if not m.get("resumed"):
                 m["resumed"] = now.strftime("%H:%M")
                 json.dump(m, open(marker, "w"), ensure_ascii=False)
