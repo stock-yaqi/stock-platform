@@ -137,7 +137,7 @@ def main():
     show = out[out["标记"] != "当日新低暂不"].head(args.top)
     lines = [f"{day} 筹码集中（{pool_name}）：样本 {len(df)} 只，候选 {len(cand)} 只（1 级 {n1} 只），退潮 {len(tide)} 只不列，户数大增回避 {len(avoid)} 只；候选中当日新低 {int((out['标记'] == '当日新低暂不').sum())} 只暂不列", ""]
     for r in show.itertuples():
-        lines.append(f"  [{r.级别}] {r.代码} {r.名称:<6} {r.标记}  户数 {r.户数:,}（{r._8:+.1f}%，上期 {r._9:+.1f}%）前十大 {r._10}%({r.前十大变化:+.1f})  期内 {r._14:+.0f}% 期后 {r._15:+.0f}%  收 {r.收盘} 距40日低 {r._18:+.1f}% 量比 {r._20:.2f}")
+        lines.append(f"  [{r.级别}] {r.代码} {r.名称:<6} {r.标记}  户数 {r.户数:,}（{r._8:+.1f}%，上期 {r._9:+.1f}%）前十大 {r._10}%({'—' if pd.isna(r.前十大变化) else f'{r.前十大变化:+.1f}'})  期内 {r._14:+.0f}% 期后 {r._15:+.0f}%  收 {r.收盘} 距40日低 {r._18:+.1f}% 量比 {r._20:.2f}")
     lines += ["", "户数大增回避（前 15）：" + "、".join(f"{r.name}({r.环比:+.0f}%)" for r in avoid.head(15).rename(columns={"环比%": "环比"}).itertuples()) if len(avoid) else "户数大增回避：无",
               "", "口径（披露后一期可交易窗口回测）：1 级 = 户数降≥10% + 无涌入退潮 + 前十大 +≥1 个百分点，超额 +2.5%、胜率 45%、9 期里 6 期为正；2 级 = 户数降≥10% + 无涌入退潮，+1.5%、20 期里 12 期为正；退潮（前 6 期涌入过≥20% 或户数仍高于前期最低 1.5 倍）不列；户数增≥20% 回避（-0.5%）。当日创 40 日新低的暂不列。季度数据滞后 1-2 个月，优势不大，需要分散 8-10 只。"]
     body = "\n".join(lines)
@@ -145,7 +145,7 @@ def main():
     for r in show.itertuples():
         col = L.RED if r.级别.startswith("1") else "#b8742a"
         parts.append(L.h_card(L.h_name(r.名称, r.代码), f"<span style='font-size:12px;color:{col};font-weight:700'>{r.级别}</span>" + (f" <span style='font-size:11px;color:{L.GRAY}'>{r.标记}</span>" if r.标记 else ""),
-                              L.h_kv(("户数", f"<span style='color:{L.GREEN};font-weight:600'>{r._8:+.1f}%</span>"), ("上期", f"{r._9:+.1f}%"), ("前十大", f"{r._10}%（{r.前十大变化:+.1f}）"), ("期末", r.期末)),
+                              L.h_kv(("户数", f"<span style='color:{L.GREEN};font-weight:600'>{r._8:+.1f}%</span>"), ("上期", f"{r._9:+.1f}%"), ("前十大", f"{r._10}%（{'—' if pd.isna(r.前十大变化) else f'{r.前十大变化:+.1f}'}）"), ("期末", r.期末)),
                               L.h_kv(("期内", L.h_pct(r._14, 0)), ("期后至今", L.h_pct(r._15, 0)), ("距40日低", f"{r._18:+.1f}%"), ("量比", f"{r._20:.2f}"), ("收盘", f"{r.收盘:g}"))))
     if len(avoid):
         parts.append(L.h_section("户数大增 · 回避", f"{len(avoid)} 只") + "<div style='padding:8px 0;line-height:1.8'>" + "、".join(f"<a href='{L.stock_url(r.code)}' style='color:{L.INK}'>{r.name}</a> <span style='color:{L.RED}'>{r.环比:+.0f}%</span>" for r in avoid.head(20).rename(columns={'环比%': '环比'}).itertuples()) + "</div>")
