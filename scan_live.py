@@ -16,7 +16,7 @@
 邮件：  读取同目录 .env：主通道 SMTP_*（Gmail），备用通道 SMTP2_*（stock@substantia.ai），主通道失败自动切备用；ALERT_TO 多个收件人用逗号隔开。
 
 用法：
-    python3 scan_live.py                 # 盘中由 launchd 每 1 分钟调用；非交易时段直接退出；文件锁防止重叠
+    python3 scan_live.py                 # 盘中由 scheduler 每 10 分钟调用（整 10 分钟对齐）；非交易时段直接退出；文件锁防止重叠
     python3 scan_live.py --now           # 忽略时段限制，用最新数据立刻扫一遍（收盘后复盘用）
     python3 scan_live.py --now --no-email
     python3 scan_live.py --build-cache   # 重建 20 日均额 / 60 日高点缓存（每天 mins_sync 之后跑）
@@ -389,10 +389,10 @@ def minutes_between(t1, t2):
 
 
 def sell_reminder(now, args, ov=None, force=False):
-    """次日早盘卖出提醒：09:35 第一封、09:55 最后提醒。逐只拉实时价，给出明确处理结论。"""
+    """次日早盘卖出提醒：09:30 窗口第一封、09:50 窗口最后提醒。逐只拉实时价，给出明确处理结论。"""
     ov = ov or {}
     t = now.strftime("%H:%M")
-    which = 1 if "09:30" <= t <= "09:45" else 2 if "09:52" <= t <= "09:59" else None
+    which = 1 if "09:30" <= t <= "09:45" else 2 if "09:50" <= t <= "09:59" else None
     if force:
         which = which or 1
     if which is None:

@@ -96,7 +96,7 @@ python3 scan_live.py --now --no-email --all-sectors --min-gain 1 --window 30   #
 发信账号是自建邮件服务器 mail.substantia.ai:465 上的专用信箱 stock@substantia.ai（对外投递经 Resend 中继），密码只在两台机器的 .env 里。Gmail SMTP 在国内两台机器上都时通时断，已弃用。注意：邮件服务器有 Fail2ban，连续认证失败会封出口 IP（解封：在服务器上 `docker exec mailserver setup fail2ban unban <ip>`）。
 信号写入 `信号_<日期>.csv` 和 `mins/_meta/live_signals_<日期>.json`，日志在 `mins/_logs/live_<日期>.log`。
 
-**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 1 分钟运行一次（文件锁防止重叠，每轮实测 1-10 秒），脚本自行判断交易时段和交易日，命中即发邮件。
+**定时任务**：`~/Library/LaunchAgents/com.qyhdt.stock-live-scan.plist`，每 10 分钟运行一次，对齐整 10 分钟（文件锁防止重叠，每轮实测 1-10 秒），脚本自行判断交易时段和交易日，命中即发邮件。
 
 ```bash
 launchctl print gui/501/com.qyhdt.stock-live-scan | head

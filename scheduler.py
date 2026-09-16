@@ -7,7 +7,7 @@
     python3 scheduler.py --stop
 
 任务表（工作日）：
-    每 60 秒        scan_live.py             （脚本自判交易时段 / 交易日，非交易时段秒退）
+    每 10 分钟      scan_live.py             （对齐整 10 分钟：09:30、09:40…；脚本自判交易时段 / 交易日，非交易时段秒退）
     07:40 / 14:00   scan_events.py --auto
     08:30           scan_brief.py
     15:10           daily_job.py             （同步分钟数据 → 缓存 → 回避名单）
@@ -26,6 +26,7 @@ PY = sys.executable
 LOGS = os.path.join(HERE, "mins", "_logs")
 META = os.path.join(HERE, "mins", "_meta")
 LOCK = os.path.join(META, "scheduler.lock")
+LIVE_EVERY_MIN = 10   # 盘中扫描间隔（分钟），对齐到整点分钟
 CALENDAR = [  # (HH:MM, argv)
     ("07:40", ["scan_events.py", "--auto"]),
     ("08:30", ["scan_brief.py"]),
@@ -86,7 +87,7 @@ def main():
     log(f"启动 pid={os.getpid()} python={PY}")
     done_today = {}  # key -> date
     live_proc = None
-    last_live = 0
+    last_live_slot = None
     while True:
         now = datetime.now()
         hm = now.strftime("%H:%M")
@@ -104,8 +105,9 @@ def main():
                             log(f"任务异常 {argv}: {e!r}")
                     else:
                         done_today[key] = now.date()
-            if time.time() - last_live >= 60 and (live_proc is None or live_proc.poll() is not None):
-                last_live = time.time()
+            slot = (now.date(), now.hour, now.minute // LIVE_EVERY_MIN)
+            if now.minute % LIVE_EVERY_MIN == 0 and slot != last_live_slot and (live_proc is None or live_proc.poll() is not None):
+                last_live_slot = slot
                 try:
                     live_proc = run(["scan_live.py"], wait=False)
                 except Exception as e:
