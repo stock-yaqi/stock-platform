@@ -630,6 +630,24 @@ def scan(args):
     new.sort(key=lambda r: (r["sector"], not r["leader"], -r["spike_x"]))
     state["signals"] += new
     state["follow"] += follow
+    # 发信节流：有新突破立即发（附带最多 15 只联动候选）；只有联动候选时不单独发，30 分钟最多汇总一封
+    send_now = bool(new)
+    if not new:
+        last_t = state.get("last_follow_mail", "00:00")
+        pending = state.get("follow_pending", []) + follow
+        state["follow_pending"] = pending
+        if minutes_between(last_t, now_t) >= 30 and pending:
+            follow = pending
+            state["follow_pending"] = []
+            state["last_follow_mail"] = now_t
+            send_now = True
+        else:
+            log(f"联动候选 {len(follow)} 只已记录，暂不发信（累计待发 {len(pending)} 只）")
+    else:
+        follow = (state.get("follow_pending", []) + follow)
+        state["follow_pending"] = []
+        state["last_follow_mail"] = now_t
+    follow = follow[:15]
     json.dump(state, open(state_path, "w"), ensure_ascii=False)
     if new:
         csv_path = os.path.join(HERE, f"信号_{day}.csv")
@@ -689,7 +707,8 @@ def scan(args):
                   parts, RULE)
     log("新信号 %d 只：%s | 联动候选 %d 只" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new), len(follow)))
     print(body)
-    if not args.no_email:
+    json.dump(state, open(state_path, "w"), ensure_ascii=False)
+    if not args.no_email and send_now:
         names_ = [x["name"] for x in new[:6]] or [x["name"] for x in follow[:6]]
         send_mail(f"【板块共振信号】{now:%H:%M} 突破 {len(new)} 只 联动 {len(follow)} 只：" + "、".join(names_) + ("…" if len(new) > 6 else ""), body, html)
 
