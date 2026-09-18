@@ -4,7 +4,7 @@
 
 规则（来自回测，见 README）：
     板块共振  板块（东财一级行业）当日等权涨幅 >= 2% 且 >= 80% 的股票上涨
-    个股      在共振板块内，当日涨幅 >= 2%，20 日均成交额 >= 3 亿
+    个股      在共振板块内，当日涨幅 >= 2%，20 日均成交额 >= 3 亿；科创板(688)默认不出信号（--include-kcb 打开）
     突破      盘中出现单分钟成交量 >= 当日到此刻中位数 8 倍，且该分钟收盘价创当日新高；
               突破发生在最近 --window 分钟内才提示（每只股票每天只提示一次）
     前期龙头  现价距 60 日最高价回撤 >= 25%（标记，不作为过滤）
@@ -564,6 +564,8 @@ def scan(args):
     follow_done = {f["code"] for f in state["follow"]}
 
     cand = df[df["sec"].isin(resonant.index) & (df["pct"] >= args.min_gain)].copy()
+    if not args.include_kcb:
+        cand = cand[~cand["code"].str.startswith("68")]   # 科创板不出信号（板块涨跌统计仍包含）
     cand["avg20"] = cand["code"].map(lambda c: cache.get(c, {}).get("avg20", 0))
     cand["high60"] = cand["code"].map(lambda c: cache.get(c, {}).get("high60", np.nan))
     cand = cand[(cand["avg20"] >= args.min_amt * 1e8) & ~cand["code"].isin(done)]
@@ -609,6 +611,8 @@ def scan(args):
     sig_codes = {x["code"] for x in all_sig}
     for sec in sec_count[sec_count >= 2].index:
         pool = df[(df["sec"] == sec) & (df["pct"] >= args.min_gain) & (df["high"] > 0)]
+        if not args.include_kcb:
+            pool = pool[~pool["code"].str.startswith("68")]
         pool = pool[(pool["price"] / pool["high"] - 1) * 100 >= -1]
         for _, s in pool.iterrows():
             if s["code"] in sig_codes or s["code"] in follow_done:
@@ -742,6 +746,7 @@ def main():
     ap.add_argument("--sectors", default="电子设备,有色金属,农林牧渔", help="只对这些板块发信号（严格回测为正的板块），逗号分隔")
     ap.add_argument("--all-sectors", action="store_true", help="不限板块（国防/电气/机械/交运/信息技术历史为负）")
     ap.add_argument("--leaders-only", action="store_true", help="只发前期龙头（距60日高<=-25%%）的信号")
+    ap.add_argument("--include-kcb", action="store_true", help="科创板(688)也出信号；默认不出")
     ap.add_argument("--ignore-overseas", action="store_true", help="不做外围大跌过滤")
     args = ap.parse_args()
     if args.build_cache:
