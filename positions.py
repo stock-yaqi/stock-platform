@@ -9,7 +9,8 @@
     python3 positions.py --all                    # 含已卖出
     python3 positions.py --add 300123 --price 12.3   # 手工加一笔（不点邮件也能加）
     python3 positions.py --sell 300123
-    python3 positions.py --remove 300123
+    python3 positions.py --remove 300123            # 软删除，可恢复
+    python3 positions.py --restore 300123
 """
 import argparse
 import json
@@ -96,9 +97,53 @@ def sell(code, price=None):
 
 
 def remove(code):
+    """软删除：只把状态改成 deleted，记录还留着，随时能 restore 回来（点错了不能真丢数据）"""
+    code = str(code).zfill(6)
+    d = load()
+    n = 0
+    for p in d["positions"]:
+        if p["code"] == code and p.get("status") == "holding":
+            p["status"] = "deleted"
+            p["deleted_at"] = f"{datetime.now():%Y%m%d %H:%M}"
+            n += 1
+    save(d)
+    return n
+
+
+def restore(code):
+    """把误删的记录恢复成持仓"""
+    code = str(code).zfill(6)
+    d = load()
+    for p in reversed(d["positions"]):
+        if p["code"] == code and p.get("status") == "deleted":
+            p["status"] = "holding"
+            p.pop("deleted_at", None)
+            save(d)
+            return p
+    return None
+
+
+def unsell(code):
+    """撤销卖出，恢复成持仓（点错了）"""
+    code = str(code).zfill(6)
+    d = load()
+    for p in reversed(d["positions"]):
+        if p["code"] == code and p.get("status") == "sold":
+            p["status"] = "holding"
+            for k in ("sold_date", "sold_time", "sold_price"):
+                p[k] = None
+            p.pop("pnl", None)
+            save(d)
+            return p
+    return None
+
+
+def purge(code=None):
+    """真正从文件里抹掉（软删除的记录攒多了再清），不传 code 就清掉所有已删除的"""
     d = load()
     n = len(d["positions"])
-    d["positions"] = [p for p in d["positions"] if not (p["code"] == str(code).zfill(6) and p.get("status") == "holding")]
+    d["positions"] = [p for p in d["positions"]
+                      if not (p.get("status") == "deleted" and (code is None or p["code"] == str(code).zfill(6)))]
     save(d)
     return n - len(d["positions"])
 
@@ -114,10 +159,12 @@ def set_price(code, price):
 
 def main():
     ap = argparse.ArgumentParser(description="持仓台账")
-    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--all", action="store_true", help="含已卖出 / 已删除")
     ap.add_argument("--add")
     ap.add_argument("--sell")
-    ap.add_argument("--remove")
+    ap.add_argument("--remove", help="软删除，可以 --restore 恢复")
+    ap.add_argument("--restore", help="恢复误删的记录")
+    ap.add_argument("--purge", nargs="?", const="__all__", help="真正抹掉已删除的记录")
     ap.add_argument("--price", type=float)
     a = ap.parse_args()
     if a.add:
@@ -129,7 +176,14 @@ def main():
         print(f"已标记卖出 {p['code']} {p['name']} @ {p['sold_price']}  盈亏 {p.get('pnl')}%" if p else "没有这只持仓")
         return
     if a.remove:
-        print(f"已删除 {remove(a.remove)} 条")
+        print(f"已删除 {remove(a.remove)} 条（可用 --restore {a.remove} 恢复）")
+        return
+    if a.restore:
+        p = restore(a.restore)
+        print(f"已恢复 {p['code']} {p['name']} @ {p['buy_price']}" if p else "没有可恢复的记录")
+        return
+    if a.purge:
+        print(f"已彻底清除 {purge(None if a.purge == '__all__' else a.purge)} 条")
         return
     d = load()
     rows = d["positions"] if a.all else holding(d)
@@ -141,7 +195,9 @@ def main():
     for p in rows:
         now_p = q.get(p["code"], {}).get("price")
         pnl = (now_p / p["buy_price"] - 1) * 100 if now_p and p.get("buy_price") else None
-        st = p["status"] if p["status"] == "holding" else f"已卖 {p['sold_date']} {p.get('pnl', '')}%"
+        st = ("holding" if p["status"] == "holding" else
+              f"已删除 {p.get('deleted_at', '')}" if p["status"] == "deleted" else
+              f"已卖 {p['sold_date']} {p.get('pnl', '')}%")
         print(f"{p['code']:<8}{p['name']:<8}{p['buy_date']:<10}{p['buy_price'] or 0:>8.2f}{now_p or 0:>8.2f}{pnl if pnl is not None else 0:>8.2f}  {st}")
 
 

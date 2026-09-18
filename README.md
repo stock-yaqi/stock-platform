@@ -238,6 +238,10 @@ python3 scan_chips.py --no-email [--input 股票池.csv]
 
 提醒邮件里有 **✓ 我已卖出** 按钮，点了才停止监控，否则第二天还会继续提醒。
 
+误操作都能救回来：删除会先弹确认页，确认之后也只是软删除（`status=deleted`，记录还在文件里），
+结果页上有「撤销删除」；卖出结果页上有「点错了，撤销卖出」。命令行对应 `--restore` / `unsell()`，
+真要抹掉用 `--purge`。
+
 ```
 python3 webhook.py --port 8085      # 由 scheduler.py 常驻拉起，挂了自动重启
 python3 scan_hold.py --status       # 看当前持仓和各项指标，不发信
@@ -245,6 +249,7 @@ python3 scan_hold.py --now --no-email
 python3 positions.py                # 命令行看持仓
 python3 positions.py --add 300123 --price 12.3    # 不点邮件也能手工建仓
 python3 positions.py --sell 300123
+python3 positions.py --remove 300123 / --restore 300123    # 软删除 / 恢复
 ```
 
 `.env` 相关项：

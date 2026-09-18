@@ -7,9 +7,10 @@
 路由（都要带 ?k=<WEB_TOKEN>，.env 里配；没配就不校验但只允许内网访问）：
     /            持仓页：现价、盈亏、卖出按钮
     /buy?c=代码   记一笔买入（买入价取点击瞬间的实时价，页面上可改）
-    /sell?c=代码  标记已卖出，停止监控
+    /sell?c=代码  标记已卖出，停止监控（结果页可撤销）
+    /undo?c=代码  撤销删除；/unsell?c=代码 撤销卖出
     /price?c=&v=  改买入价
-    /del?c=代码   删除这笔（点错了）
+    /del?c=代码   删除这笔（先弹确认页，删掉也是软删除，能撤销）
     /health      存活检查，不需要 token
 
 家宽公网 IP 会变，所以发信前 scan_live.web_base() 会重新探测一次出口 IP 并实测 /health，
@@ -174,16 +175,42 @@ class H(BaseHTTPRequestHandler):
             log(f"{client} 卖出 {p['code']} {p['name']} @ {p['sold_price']} 盈亏 {p.get('pnl')}%")
             body = (f'<div style="font-size:17px;font-weight:700">{p["name"]} 已标记卖出</div>'
                     f'<div style="margin-top:8px;font-size:15px">买入 {p["buy_price"]} → 卖出 {p["sold_price"]}　{pct_html(p.get("pnl"))}</div>'
-                    f'<div style="margin-top:8px;color:{GRAY};font-size:13px">这只的冲高监控已停止。</div>')
+                    f'<div style="margin-top:8px;color:{GRAY};font-size:13px">这只的冲高监控已停止。</div>'
+                    f'<div style="margin-top:12px">{btn(f"/unsell?c={code}&k={token}", "点错了，撤销卖出", "#fff", GRAY)}</div>')
             self._send(page("已卖出", body, token))
+        elif path == "/unsell" and code:
+            p = P.unsell(code)
+            log(f"{client} 撤销卖出 {code} → " + (p["name"] if p else "没找到"))
+            self._send(page("已恢复持仓" if p else "没找到", position_rows(token), token))
         elif path == "/price" and code:
             v = (qs.get("v") or [""])[0]
             p = P.set_price(code, float(v)) if v else None
             self._send(page("买入价已更新" if p else "没改成", position_rows(token), token))
         elif path == "/del" and code:
+            if (qs.get("yes") or [""])[0] != "1":
+                p = P.find(code)
+                if not p:
+                    self._send(page("没找到", position_rows(token), token))
+                    return
+                body = (f'<div style="font-size:17px;font-weight:700">确定要删掉 {p["name"]} {p["code"]} 吗？</div>'
+                        f'<div style="margin-top:8px;font-size:14px;color:{GRAY}">买入 {p["buy_date"][4:6]}-{p["buy_date"][6:]} '
+                        f'{p["buy_time"]} @ {p["buy_price"]}　删掉之后就不再做冲高监控了。</div>'
+                        f'<div style="margin-top:8px;font-size:13px;color:{GRAY}">如果你是卖掉了，应该点「我已卖出」，不是删除。</div>'
+                        f'<div style="margin-top:14px">{btn(f"/del?c={code}&yes=1&k={token}", "确认删除", "#b8742a")}'
+                        f'{btn(f"/?k={token}", "取消", "#fff", INK)}</div>')
+                self._send(page("确认删除", body, token))
+                return
+            p = P.find(code)
             n = P.remove(code)
             log(f"{client} 删除 {code} x{n}")
-            self._send(page("已删除" if n else "没找到", position_rows(token), token))
+            body = (f'<div style="font-size:17px;font-weight:700">已删除 {p["name"] if p else code}</div>'
+                    f'<div style="margin-top:10px">{btn(f"/undo?c={code}&k={token}", "撤销删除", GREEN)}</div>'
+                    f'<div style="margin-top:14px">{position_rows(token)}</div>') if n else position_rows(token)
+            self._send(page("已删除" if n else "没找到", body, token))
+        elif path == "/undo" and code:
+            p = P.restore(code)
+            log(f"{client} 撤销删除 {code} → " + (p["name"] if p else "没找到"))
+            self._send(page("已恢复" if p else "没有可恢复的记录", position_rows(token), token))
         else:
             self._send(page("我的持仓", position_rows(token), token))
 
