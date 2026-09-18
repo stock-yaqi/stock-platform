@@ -250,7 +250,16 @@ python3 positions.py --sell 300123
 `.env` 相关项：
 
 ```
-WEB_BASE=auto        # 邮件按钮用的外网地址；auto = 自动探测公网 IP（缓存 30 分钟，家宽 IP 变了也跟得上）
+WEB_BASE=auto        # 邮件按钮用的外网地址；auto = 每次发信前重新探测公网出口 IP
 WEB_PORT=8085
 WEB_TOKEN=xxxxxxxx   # 链接里的 k= 参数，不带或不对一律 403
+```
+
+**家宽 IP 会变**，所以 `WEB_BASE=auto` 时每封邮件都重新确认一次：探测 Mac Studio 的公网出口 IP →
+用这个地址实测 `/health` 能不能打开（路由器支持 hairpin，Mac Studio 自己就能测）→ 通了才把按钮写进邮件。
+探测不到、或端口映射断了，就不放按钮，宁可没有也不给死链接（日志里会写明原因）。
+已经发出去的旧邮件里的链接会随 IP 变化失效，新邮件自动用新地址。
+
+```
+python3 webhook.py --check    # 当前出口 IP / 邮件会用哪个地址 / 内外网通不通 / 持仓页链接
 ```

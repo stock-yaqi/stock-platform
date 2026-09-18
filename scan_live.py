@@ -247,36 +247,72 @@ def h_kv(*pairs):
     return "&nbsp;&nbsp;".join(f'<span style="color:{GRAY}">{k}</span> <b>{v}</b>' for k, v in pairs)
 
 
-def web_base():
-    """持仓回执服务（webhook.py）的外网地址。.env 里配 WEB_BASE=http://1.2.3.4:8085；
-    配成 auto 就自动探测公网 IP（缓存 30 分钟，家宽 IP 变了也能跟上）。没配返回空串，邮件里就不出按钮。"""
-    env = load_env()
-    v = (env.get("WEB_BASE") or "").strip().rstrip("/")
-    if v and v != "auto":
-        return v
-    if not v:
-        return ""
-    port = env.get("WEB_PORT", "8085")
-    cache = os.path.join(META, "pubip.json")
-    try:
-        c = json.load(open(cache))
-        if time.time() - c["t"] < 1800 and c.get("ip"):
-            return f"http://{c['ip']}:{port}"
-    except Exception:
-        pass
+_WEB_BASE = None   # 每个进程只算一次（一封邮件里每张卡片都会问一次）
+
+
+def _detect_pubip():
+    """问外部服务要 Mac Studio 的公网出口 IP"""
     for u in ("https://ipinfo.io/ip", "https://api.ipify.org", "https://ifconfig.me/ip"):
         try:
             ip = http.get(u, headers=UA, timeout=8).text.strip()
-            if ip.count(".") == 3 and all(x.isdigit() for x in ip.split(".")):
-                json.dump({"ip": ip, "t": time.time()}, open(cache, "w"))
-                return f"http://{ip}:{port}"
+            if ip.count(".") == 3 and all(x.isdigit() and 0 <= int(x) <= 255 for x in ip.split(".")):
+                return ip
         except Exception:
             pass
+    return ""
+
+
+def _probe(base, timeout=5):
+    """真的访问一次 /health，确认这个地址现在能打开 webhook（路由器支持 hairpin，Mac Studio 自己也测得出来）"""
     try:
-        c = json.load(open(cache))
-        return f"http://{c['ip']}:{port}" if c.get("ip") else ""
+        return http.get(base + "/health", timeout=timeout).text.strip() == "ok"
     except Exception:
-        return ""
+        return False
+
+
+def web_base(force=False):
+    """邮件按钮用的外网地址。.env: WEB_BASE=http://1.2.3.4:8085 写死，或 WEB_BASE=auto。
+
+    auto 的流程：探测公网出口 IP → 拿 /health 实测一次能不能打开 → 能才写进邮件。
+    家宽 IP 会变，所以每封邮件都重新确认一遍；探测不到或打不开就不放按钮，宁可没有也不给死链接。
+    """
+    global _WEB_BASE
+    if _WEB_BASE is not None and not force:
+        return _WEB_BASE
+    env = load_env()
+    v = (env.get("WEB_BASE") or "").strip().rstrip("/")
+    if not v:
+        _WEB_BASE = ""
+        return _WEB_BASE
+    if v != "auto":
+        _WEB_BASE = v if _probe(v) else ""
+        if not _WEB_BASE:
+            log(f"WEB_BASE={v} 打不开，本轮邮件不放「我已买入」按钮")
+        return _WEB_BASE
+    port = env.get("WEB_PORT", "8085")
+    cache_p = os.path.join(META, "pubip.json")
+    try:
+        cache = json.load(open(cache_p))
+    except Exception:
+        cache = {}
+    ip = _detect_pubip()
+    cands = [x for x in (ip, cache.get("ip")) if x]           # 新探到的优先，探测失败就退回上次用过的
+    seen, order = set(), []
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            order.append(c)
+    for c in order:
+        base = f"http://{c}:{port}"
+        if _probe(base):
+            if cache.get("ip") and cache["ip"] != c:
+                log(f"公网出口 IP 变了：{cache['ip']} → {c}（此前邮件里的链接已失效，新邮件用新地址）")
+            json.dump({"ip": c, "t": time.time(), "checked": datetime.now().strftime("%Y-%m-%d %H:%M")}, open(cache_p, "w"))
+            _WEB_BASE = base
+            return _WEB_BASE
+    log(f"公网地址不可用（探测到 {order or '无'}），本轮邮件不放「我已买入」按钮；检查路由器 8085 端口映射和 webhook 进程")
+    _WEB_BASE = ""
+    return _WEB_BASE
 
 
 def buy_url(code, price=None, sector="", src="共振邮件"):

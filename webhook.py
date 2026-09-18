@@ -12,9 +12,13 @@
     /del?c=代码   删除这笔（点错了）
     /health      存活检查，不需要 token
 
+家宽公网 IP 会变，所以发信前 scan_live.web_base() 会重新探测一次出口 IP 并实测 /health，
+通了才把按钮放进邮件；已经发出去的旧邮件里的链接会随 IP 变化失效。
+
 用法：
     python3 webhook.py                  # 前台跑，Ctrl-C 停
     python3 webhook.py --port 8085
+    python3 webhook.py --check          # 只看当前出口 IP / 邮件会用哪个地址 / 通不通
 """
 import argparse
 import json
@@ -185,7 +189,18 @@ def main():
     ap = argparse.ArgumentParser(description="持仓回执 Web 服务")
     ap.add_argument("--port", type=int, default=int(L.load_env().get("WEB_PORT") or 8085))
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--check", action="store_true", help="只检查：打印当前公网出口 IP、邮件会用的地址、能不能打开，不启动服务")
     a = ap.parse_args()
+    if a.check:
+        env = L.load_env()
+        ip = L._detect_pubip()
+        base = L.web_base(force=True)
+        print(f"公网出口 IP  {ip or '探测失败'}")
+        print(f"邮件里会用的地址  {base or '（不可达，本轮不会放按钮）'}")
+        print(f"内网地址  http://192.168.3.21:{a.port}  → " + ("通" if L._probe(f"http://192.168.3.21:{a.port}") else "不通"))
+        if base:
+            print(f"持仓页  {base}/?k={env.get('WEB_TOKEN', '')}")
+        sys.exit(0 if base else 1)
     srv = ThreadingHTTPServer((a.host, a.port), H)
     srv.token = L.load_env().get("WEB_TOKEN", "")
     srv.daemon_threads = True
