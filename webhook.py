@@ -85,7 +85,10 @@ def position_rows(token):
         s = q.get(p["code"], {})
         now_p, bp = s.get("price"), p.get("buy_price")
         pnl = (now_p / bp - 1) * 100 if now_p and bp else None
-        watch = "次日起 1 分钟冲高监控中" if p["buy_date"] < today else "明天 09:30 起 1 分钟冲高监控"
+        if p["buy_date"] < today and datetime.now().weekday() < 5:
+            watch = "今天 1 分钟冲高监控中"
+        else:
+            watch = f"{L.day_label(L.next_trading_day())} 09:30 起 1 分钟冲高监控"
         out.append(
             f'<div style="padding:12px 0;border-bottom:1px solid {LINE}">'
             f'<div style="display:flex;justify-content:space-between;align-items:baseline">'
@@ -160,7 +163,7 @@ class H(BaseHTTPRequestHandler):
                     f'<input name="v" type="number" step="0.01" placeholder="不对就改" style="width:110px;padding:7px;border:1px solid {LINE};border-radius:6px;font-size:14px">'
                     f'<button style="padding:7px 12px;margin-left:4px;border:1px solid {LINE};background:#fff;border-radius:6px;font-size:14px">改价</button></form></div>'
                     f'<div style="margin-top:10px;color:{GRAY};font-size:13px;line-height:1.6">'
-                    f'明天 09:30 起每分钟盯这只，冲高、回落、无溢价、快到 10:00 都会给你发邮件。<br>卖掉之后回来点「我已卖出」，监控才会停。</div>'
+                    f'{L.day_label(L.next_trading_day())} 09:30 起每分钟盯这只，冲高、回落、无溢价、快到 10:00 都会给你发邮件。<br>卖掉之后回来点「我已卖出」，监控才会停。</div>'
                     f'<div style="margin-top:10px">{btn(L.stock_url(p["code"]), "看行情")}{btn(sell_u, "我已卖出", GREEN)}</div>')
             self._send(page("买入已记录", body, token))
         elif path == "/sell" and code:

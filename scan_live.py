@@ -247,6 +247,21 @@ def h_kv(*pairs):
     return "&nbsp;&nbsp;".join(f'<span style="color:{GRAY}">{k}</span> <b>{v}</b>' for k, v in pairs)
 
 
+WEEK = "一二三四五六日"
+
+
+def next_trading_day(d=None):
+    """下一个交易日。只跳周末，不含节假日表——长假前一天买入的，文案会偏乐观，实际监控由 scan_hold 自己按交易日判断。"""
+    d = (d or date.today()) + timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def day_label(d):
+    return f"{d:%m-%d} 周{WEEK[d.weekday()]}"
+
+
 _WEB_BASE = None   # 每个进程只算一次（一封邮件里每张卡片都会问一次）
 
 
@@ -334,7 +349,7 @@ def h_buy_btn(code, price=None, sector="", src="共振邮件"):
         return ""
     return (f"<div style='margin-top:8px'><a href='{u}' style='display:inline-block;padding:8px 16px;border-radius:6px;"
             f"background:{INK};color:#fff;text-decoration:none;font-size:13px;font-weight:600'>✓ 我已买入</a>"
-            f"<span style='color:{GRAY};font-size:11px;margin-left:8px'>点一下，明早 09:30 起每分钟盯冲高</span></div>")
+            f"<span style='color:{GRAY};font-size:11px;margin-left:8px'>点一下，{day_label(next_trading_day())} 09:30 起每分钟盯冲高</span></div>")
 
 
 # ---------------------------------------------------------------- 本地缓存：20 日均额 / 60 日高点
@@ -780,7 +795,7 @@ def scan(args):
     lines.append(RULE)
     _base = web_base()
     if _base:
-        lines += ["", f"买了哪只就点邮件里的「我已买入」，次日 09:30 起每分钟盯冲高。持仓页：{_base}/?k={load_env().get('WEB_TOKEN', '')}"]
+        lines += ["", f"买了哪只就点邮件里的「我已买入」，{day_label(next_trading_day())} 09:30 起每分钟盯冲高。持仓页：{_base}/?k={load_env().get('WEB_TOKEN', '')}"]
     body = "\n".join(lines)
     parts = []
     for sec, grp in pd.DataFrame(new).groupby("sector") if new else []:
@@ -807,7 +822,7 @@ def scan(args):
                      f"style='color:{GRAY};font-size:13px'>查看我的持仓 / 冲高监控状态</a></div>")
     html = h_wrap(f"板块共振信号 · {now:%H:%M}",
                   [f"{day[:4]}-{day[4:6]}-{day[6:]} · 全市场均涨 {h_pct(mkt)} · 共振板块 {len(resonant)} 个", f"外围 {ov_line}{ov_warn}"],
-                  parts, RULE + "　买入后点卡片上的「我已买入」，次日 09:30 起每分钟盯冲高，冲高/回落/临近 10:00 都会单独发提醒。")
+                  parts, RULE + f"　买入后点卡片上的「我已买入」，{day_label(next_trading_day())} 09:30 起每分钟盯冲高，冲高/回落/临近 10:00 都会单独发提醒。")
     log("新信号 %d 只：%s | 联动候选 %d 只" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new), len(follow)))
     print(body)
     json.dump(state, open(state_path, "w"), ensure_ascii=False)
