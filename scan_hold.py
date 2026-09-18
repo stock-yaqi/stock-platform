@@ -149,7 +149,8 @@ def main():
         return
     if not hits:
         return
-    P.save(d)
+    if not args.no_email:
+        P.save(d)   # 只有真发信才记「已提醒」，--no-email 演练不能把该发的邮件压掉
 
     ov_line = "  ".join(f"{k} {v:+.2f}%" for k, v in ov.items()) or "外围数据缺失"
     head = hits[0][3] if len(hits) == 1 else f"{len(hits)} 只触发卖出提醒"
