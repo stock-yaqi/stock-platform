@@ -39,6 +39,7 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -244,6 +245,60 @@ def h_name(name, code):
 def h_kv(*pairs):
     """关键数字：标签灰、数值黑，用两个空格隔开"""
     return "&nbsp;&nbsp;".join(f'<span style="color:{GRAY}">{k}</span> <b>{v}</b>' for k, v in pairs)
+
+
+def web_base():
+    """持仓回执服务（webhook.py）的外网地址。.env 里配 WEB_BASE=http://1.2.3.4:8085；
+    配成 auto 就自动探测公网 IP（缓存 30 分钟，家宽 IP 变了也能跟上）。没配返回空串，邮件里就不出按钮。"""
+    env = load_env()
+    v = (env.get("WEB_BASE") or "").strip().rstrip("/")
+    if v and v != "auto":
+        return v
+    if not v:
+        return ""
+    port = env.get("WEB_PORT", "8085")
+    cache = os.path.join(META, "pubip.json")
+    try:
+        c = json.load(open(cache))
+        if time.time() - c["t"] < 1800 and c.get("ip"):
+            return f"http://{c['ip']}:{port}"
+    except Exception:
+        pass
+    for u in ("https://ipinfo.io/ip", "https://api.ipify.org", "https://ifconfig.me/ip"):
+        try:
+            ip = http.get(u, headers=UA, timeout=8).text.strip()
+            if ip.count(".") == 3 and all(x.isdigit() for x in ip.split(".")):
+                json.dump({"ip": ip, "t": time.time()}, open(cache, "w"))
+                return f"http://{ip}:{port}"
+        except Exception:
+            pass
+    try:
+        c = json.load(open(cache))
+        return f"http://{c['ip']}:{port}" if c.get("ip") else ""
+    except Exception:
+        return ""
+
+
+def buy_url(code, price=None, sector="", src="共振邮件"):
+    base = web_base()
+    if not base:
+        return ""
+    u = f"{base}/buy?c={code}&k={quote(load_env().get('WEB_TOKEN', ''))}&src={quote(src)}"
+    if price:
+        u += f"&p={price}"
+    if sector:
+        u += f"&s={quote(sector)}"
+    return u
+
+
+def h_buy_btn(code, price=None, sector="", src="共振邮件"):
+    """邮件里的「我已买入」按钮：点一下把这只记进持仓，次日 09:30 起每分钟冲高监控"""
+    u = buy_url(code, price, sector, src)
+    if not u:
+        return ""
+    return (f"<div style='margin-top:8px'><a href='{u}' style='display:inline-block;padding:8px 16px;border-radius:6px;"
+            f"background:{INK};color:#fff;text-decoration:none;font-size:13px;font-weight:600'>✓ 我已买入</a>"
+            f"<span style='color:{GRAY};font-size:11px;margin-left:8px'>点一下，明早 09:30 起每分钟盯冲高</span></div>")
 
 
 # ---------------------------------------------------------------- 本地缓存：20 日均额 / 60 日高点
@@ -687,6 +742,9 @@ def scan(args):
             lines.append(f"  {x.code} {x.name}  现价 {x.price}  涨 {x.pct:+.2f}%  距日内高 {x.dist_high}%  20日均额 {x.avg20_yi} 亿  距60日高 {x.dd60}%" + ("  [前期龙头]" if x.leader else ""))
         lines.append("")
     lines.append(RULE)
+    _base = web_base()
+    if _base:
+        lines += ["", f"买了哪只就点邮件里的「我已买入」，次日 09:30 起每分钟盯冲高。持仓页：{_base}/?k={load_env().get('WEB_TOKEN', '')}"]
     body = "\n".join(lines)
     parts = []
     for sec, grp in pd.DataFrame(new).groupby("sector") if new else []:
@@ -697,18 +755,23 @@ def scan(args):
                 h_name(x.name, x.code), h_pct(x.pct),
                 h_kv(("突破", f"{x.breakout_time} @ {x.breakout_price:g}"), ("分钟量", f"{x.spike_x} 倍"), ("现价", f"{x.price:g}")),
                 h_kv(("首次突破", x.first_breakout), ("20日均额", f"{x.avg20_yi} 亿"), ("距60日高", f"{x.dd60}%")) +
-                ("" if x.leader else f" <span style='color:{GRAY}'>非前期龙头，历史偏弱</span>"),
+                ("" if x.leader else f" <span style='color:{GRAY}'>非前期龙头，历史偏弱</span>") +
+                h_buy_btn(x.code, x.price, sec),
                 "前期龙头" if x.leader else ""))
     for sec, grp in pd.DataFrame(follow).groupby("sector") if follow else []:
         parts.append(h_section(f"联动候选 · {sec}", f"板块今日已 {grp.iloc[0]['n_breakouts']} 只突破 · 高点 1% 以内、尚未突破"))
         for x in grp.itertuples():
             parts.append(h_card(h_name(x.name, x.code), h_pct(x.pct),
                                 h_kv(("现价", f"{x.price:g}"), ("距日内高", f"{x.dist_high}%"), ("20日均额", f"{x.avg20_yi} 亿")),
-                                h_kv(("距60日高", f"{x.dd60}%")), "前期龙头" if x.leader else ""))
+                                h_kv(("距60日高", f"{x.dd60}%")) + h_buy_btn(x.code, x.price, sec, "联动候选"),
+                                "前期龙头" if x.leader else ""))
     ov_warn = " · <span style='color:#b8742a'>隔夜纳指跌超 1.5%，早盘溢价可能偏弱</span>" if ov.get("纳指", 0) <= -1.5 else ""
+    if _base:
+        parts.append(f"<div style='margin-top:16px;text-align:center'><a href='{_base}/?k={quote(load_env().get('WEB_TOKEN', ''))}' "
+                     f"style='color:{GRAY};font-size:13px'>查看我的持仓 / 冲高监控状态</a></div>")
     html = h_wrap(f"板块共振信号 · {now:%H:%M}",
                   [f"{day[:4]}-{day[4:6]}-{day[6:]} · 全市场均涨 {h_pct(mkt)} · 共振板块 {len(resonant)} 个", f"外围 {ov_line}{ov_warn}"],
-                  parts, RULE)
+                  parts, RULE + "　买入后点卡片上的「我已买入」，次日 09:30 起每分钟盯冲高，冲高/回落/临近 10:00 都会单独发提醒。")
     log("新信号 %d 只：%s | 联动候选 %d 只" % (len(new), " ".join(f"{x['code']}{x['name']}" for x in new), len(follow)))
     print(body)
     json.dump(state, open(state_path, "w"), ensure_ascii=False)
